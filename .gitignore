@@ -1,0 +1,32 @@
+# R data files
+*.rds
+*.RData
+*.rdata
+*.Rhistory
+
+# Data files
+*.csv
+*.xlsx
+*.xls
+
+# Documents
+*.docx
+*.doc
+
+# Presentations
+*.pptx
+*.ppt
+
+# PDFs (optional, if generated reports)
+*.pdf
+
+# RStudio
+.Rproj.user/
+.RDataTmp*
+
+# macOS
+.DS_Store
+
+# Temporary files
+*.tmp
+*.log
