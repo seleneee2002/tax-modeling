@@ -270,37 +270,108 @@ state_lookup <- unique(baseline_df[, c("state_fips", "state_abbr")])
 state_lookup$state_abbr <- as.character(state_lookup$state_abbr)
 state_lookup$state_fips <- sprintf("%02s", state_lookup$state_fips)
 
-build_cpd_long_df <- function(cpd_path, lookup_df) {
-  state_abbr <- sub("^US-", "", basename(dirname(dirname(cpd_path))))
-  cpd_df <- utils::read.csv(cpd_path, stringsAsFactors = FALSE)
-  cpd_df <- cpd_df[cpd_df$RACE == 0, , drop = FALSE]
-  cpd_df$state_abbr <- state_abbr
-  cpd_df$state_fips <- lookup_df$state_fips[match(state_abbr, lookup_df$state_abbr)]
-  cpd_df$sex <- ifelse(cpd_df$SEX == 0, "Male", "Female")
-  cpd_df$Calendar_Year <- cpd_df$START_YOB + cpd_df$AGE
-  cpd_df <- cpd_df[cpd_df$Calendar_Year >= year_min & cpd_df$Calendar_Year <= year_max, , drop = FALSE]
-
-  cpd_df[, c(
-    "state_fips",
-    "state_abbr",
-    "sex",
-    "START_YOB",
-    "END_YOB",
-    "AGE",
-    "Calendar_Year",
-    "CAT1",
-    "CAT2",
-    "CAT3",
-    "CAT4",
-    "CAT5",
-    "CAT6"
-  )]
-}
-
-cpd_files <- Sys.glob(
-  file.path(repo_root, "01_input_data", "2019-TUS-CPS-States", "US-*", "smoking", "cpd.csv")
+#===============================================================================
+# CPD parameter preprocessing
+#===============================================================================
+cpd_parms_raw <- utils::read.csv(
+  file.path(repo_root, "01_input_data", "SHG_parms07132026.csv"),
+  stringsAsFactors = FALSE
 )
-cpd_long_df <- do.call(rbind, lapply(cpd_files, build_cpd_long_df, lookup_df = state_lookup))
+
+cpd_parms_processed <- cpd_parms_raw[
+  cpd_parms_raw$per >= year_min & cpd_parms_raw$per <= year_max,
+  c(
+    "st_fips",
+    "coh",
+    "age",
+    "per",
+    "sex",
+    "p_v1_cpd1",
+    "p_v1_cpd2",
+    "p_v1_cpd3",
+    "p_v1_cpd4",
+    "p_v1_cpd5",
+    "p_v1_cpd6"
+  ),
+  drop = FALSE
+]
+
+cpd_parms_processed$st_fips <- sprintf("%02s", as.integer(cpd_parms_processed$st_fips))
+cpd_parms_processed$state_abbr <- state_lookup$state_abbr[
+  match(cpd_parms_processed$st_fips, state_lookup$state_fips)
+]
+cpd_parms_processed$sex <- ifelse(cpd_parms_processed$sex == 1, "Male", "Female")
+cpd_parms_processed$START_YOB <- as.integer(cpd_parms_processed$coh)
+cpd_parms_processed$END_YOB <- cpd_parms_processed$START_YOB
+cpd_parms_processed$AGE <- as.integer(cpd_parms_processed$age)
+cpd_parms_processed$Calendar_Year <- as.integer(cpd_parms_processed$per)
+
+cpd_parms_processed <- cpd_parms_processed[
+  order(
+    as.integer(cpd_parms_processed$st_fips),
+    cpd_parms_processed$sex,
+    cpd_parms_processed$START_YOB,
+    cpd_parms_processed$AGE,
+    cpd_parms_processed$Calendar_Year
+  ),
+  ,
+  drop = FALSE
+]
+
+cpd_parms_processed <- cpd_parms_processed[, c(
+  "st_fips",
+  "state_abbr",
+  "sex",
+  "START_YOB",
+  "END_YOB",
+  "AGE",
+  "Calendar_Year",
+  "p_v1_cpd1",
+  "p_v1_cpd2",
+  "p_v1_cpd3",
+  "p_v1_cpd4",
+  "p_v1_cpd5",
+  "p_v1_cpd6"
+)]
+
+names(cpd_parms_processed)[names(cpd_parms_processed) == "st_fips"] <- "state_fips"
+
+utils::write.csv(
+  cpd_parms_processed,
+  file.path(repo_root, "01_input_data", "CPD_parms07162026.csv"),
+  row.names = FALSE
+)
+
+cpd_long_df <- utils::read.csv(
+  file.path(repo_root, "01_input_data", "CPD_parms07162026.csv"),
+  stringsAsFactors = FALSE
+)
+cpd_long_df$state_fips <- sprintf("%02s", as.integer(cpd_long_df$state_fips))
+cpd_long_df$START_YOB <- as.integer(cpd_long_df$START_YOB)
+cpd_long_df$END_YOB <- as.integer(cpd_long_df$END_YOB)
+cpd_long_df$AGE <- as.integer(cpd_long_df$AGE)
+cpd_long_df$Calendar_Year <- as.integer(cpd_long_df$Calendar_Year)
+names(cpd_long_df)[names(cpd_long_df) == "p_v1_cpd1"] <- "CAT1"
+names(cpd_long_df)[names(cpd_long_df) == "p_v1_cpd2"] <- "CAT2"
+names(cpd_long_df)[names(cpd_long_df) == "p_v1_cpd3"] <- "CAT3"
+names(cpd_long_df)[names(cpd_long_df) == "p_v1_cpd4"] <- "CAT4"
+names(cpd_long_df)[names(cpd_long_df) == "p_v1_cpd5"] <- "CAT5"
+names(cpd_long_df)[names(cpd_long_df) == "p_v1_cpd6"] <- "CAT6"
+cpd_long_df <- cpd_long_df[, c(
+  "state_fips",
+  "state_abbr",
+  "sex",
+  "START_YOB",
+  "END_YOB",
+  "AGE",
+  "Calendar_Year",
+  "CAT1",
+  "CAT2",
+  "CAT3",
+  "CAT4",
+  "CAT5",
+  "CAT6"
+)]
 
 merge_keys <- c(
   "state_fips",
@@ -943,6 +1014,42 @@ build_mortality_summary <- function(mort_obj, scenario_name) {
   df
 }
 
+build_simulation_prevalence_df_from_results <- function(simulation_results) {
+  metadata <- simulation_results$metadata
+  state_fips_value <- metadata$state_fips
+  state_abbr_value <- metadata$state_abbr
+
+  build_scenario_df <- function(result_obj, scenario_name) {
+    male_df <- build_long_df(
+      state_fips = state_fips_value,
+      state_abbr = state_abbr_value,
+      sex = "Male",
+      smokers_mat = result_obj$l_prev_out$m_M_smokers,
+      pop_mat = result_obj$l_prev_out$m_M_popAP
+    )
+    female_df <- build_long_df(
+      state_fips = state_fips_value,
+      state_abbr = state_abbr_value,
+      sex = "Female",
+      smokers_mat = result_obj$l_prev_out$m_F_smokers,
+      pop_mat = result_obj$l_prev_out$m_F_popAP
+    )
+
+    scenario_df <- rbind(male_df, female_df)
+    scenario_df$scenario <- scenario_name
+    scenario_df$policy_year <- as.integer(metadata$policy_year)
+    scenario_df$tax_increase_dollar <- as.numeric(metadata$tax_increase_dollar)
+    scenario_df$inflation_adjustment_rate <- as.numeric(metadata$inflation_adjustment_rate)
+    scenario_df
+  }
+
+  rbind(
+    build_scenario_df(simulation_results$baseline, "baseline"),
+    build_scenario_df(simulation_results$current_model, "current_model"),
+    build_scenario_df(simulation_results$inflation_adjusted, "inflation_adjusted")
+  )
+}
+
 for (state_idx in seq_len(nrow(comparison_states))) {
   state_fips_value <- comparison_states$state_fips[state_idx]
   state_abbr_value <- comparison_states$state_abbr[state_idx]
@@ -953,13 +1060,29 @@ for (state_idx in seq_len(nrow(comparison_states))) {
   )
 
   if (!file.exists(simulation_prevalence_path)) {
-    next
-  }
+    simulation_results_path <- file.path(
+      output_dir,
+      paste0(tolower(state_abbr_value), "_tax_simulation_results.rds")
+    )
 
-  simulation_prevalence_df <- utils::read.csv(
-    simulation_prevalence_path,
-    stringsAsFactors = FALSE
-  )
+    if (!file.exists(simulation_results_path)) {
+      next
+    }
+
+    simulation_prevalence_df <- build_simulation_prevalence_df_from_results(
+      readRDS(simulation_results_path)
+    )
+    utils::write.csv(
+      simulation_prevalence_df,
+      simulation_prevalence_path,
+      row.names = FALSE
+    )
+  } else {
+    simulation_prevalence_df <- utils::read.csv(
+      simulation_prevalence_path,
+      stringsAsFactors = FALSE
+    )
+  }
   simulation_prevalence_df <- simulation_prevalence_df[
     simulation_prevalence_df$state_abbr == state_abbr_value,
     ,
@@ -1372,28 +1495,28 @@ for (state_idx in seq_len(nrow(comparison_states))) {
       Calendar_Year = policy_comparison_df$Calendar_Year,
       Fiscal_Year_End = fiscal_year_end_date(policy_comparison_df$Calendar_Year),
       revenue = policy_comparison_df$observed_tax_revenue,
-      series = "Real",
+      series = "Observed revenue",
       stringsAsFactors = FALSE
     ),
     data.frame(
       Calendar_Year = policy_comparison_df$Calendar_Year,
       Fiscal_Year_End = fiscal_year_end_date(policy_comparison_df$Calendar_Year),
       revenue = policy_comparison_df$tax_revenue_model_current_model,
-      series = "Model",
+      series = "Modeled revenue",
       stringsAsFactors = FALSE
     ),
     data.frame(
       Calendar_Year = policy_comparison_df$Calendar_Year,
       Fiscal_Year_End = fiscal_year_end_date(policy_comparison_df$Calendar_Year),
       revenue = policy_comparison_df$tax_revenue_model_scaled_scaled_model,
-      series = "Scaled",
+      series = "Modeled revenue + inflation adjustment",
       stringsAsFactors = FALSE
     ),
     data.frame(
       Calendar_Year = policy_comparison_df$Calendar_Year,
       Fiscal_Year_End = fiscal_year_end_date(policy_comparison_df$Calendar_Year),
       revenue = policy_comparison_df$tax_revenue_model_scaled_inflation_adjusted,
-      series = "Inflation-adjusted model scaled",
+      series = "Modeled revenue + inflation adjustment + scaling",
       stringsAsFactors = FALSE
     )
   )
@@ -1419,11 +1542,17 @@ for (state_idx in seq_len(nrow(comparison_states))) {
     ggplot2::geom_line(linewidth = 1.1) +
     ggplot2::geom_point(size = 2.2) +
     ggplot2::scale_color_manual(
+      breaks = c(
+        "Observed revenue",
+        "Modeled revenue",
+        "Modeled revenue + inflation adjustment",
+        "Modeled revenue + inflation adjustment + scaling"
+      ),
       values = c(
-        "Real" = "#1f77b4",
-        "Model" = "#d62728",
-        "Scaled" = "#ff7f0e",
-        "Inflation-adjusted model scaled" = "#2ca02c"
+        "Observed revenue" = "#1f77b4",
+        "Modeled revenue" = "#d62728",
+        "Modeled revenue + inflation adjustment" = "#ff7f0e",
+        "Modeled revenue + inflation adjustment + scaling" = "#2ca02c"
       )
     ) +
     ggplot2::scale_x_date(
@@ -1435,7 +1564,6 @@ for (state_idx in seq_len(nrow(comparison_states))) {
     ) +
     ggplot2::labs(
       title = paste(state_name_value, "Revenue Comparison"),
-      subtitle = "Real vs model vs model scaled vs inflation-adjusted model scaled",
       x = "Fiscal year end (June 30)",
       y = "Revenue",
       color = NULL
@@ -1448,6 +1576,9 @@ for (state_idx in seq_len(nrow(comparison_states))) {
       plot.background = ggplot2::element_rect(fill = "white", color = NA),
       legend.background = ggplot2::element_rect(fill = "white", color = NA),
       legend.key = ggplot2::element_rect(fill = "white", color = NA)
+    ) +
+    ggplot2::guides(
+      color = ggplot2::guide_legend(nrow = 2, byrow = TRUE)
     )
 
   ggplot2::ggsave(
@@ -1477,4 +1608,249 @@ for (state_idx in seq_len(nrow(comparison_states))) {
     file.path(output_dir, paste0(tolower(state_abbr_value), "_policy_comparison.xlsx")),
     overwrite = TRUE
   )
+
 }
+
+
+#===============================================================================
+# Revenue summary
+#===============================================================================
+policy_annual_comparison_df <- do.call(
+  rbind,
+  lapply(
+    seq_len(nrow(comparison_states)),
+    function(state_idx) {
+      state_abbr_value <- comparison_states$state_abbr[state_idx]
+      state_policy_row <- state_policy_configs[
+        state_policy_configs$state_abbr == state_abbr_value,
+        ,
+        drop = FALSE
+      ]
+      policy_comparison_df <- openxlsx::read.xlsx(
+        file.path(output_dir, paste0(tolower(state_abbr_value), "_policy_comparison.xlsx")),
+        sheet = "annual_comparison"
+      )
+      policy_comparison_df$state_fips <- comparison_states$state_fips[state_idx]
+      policy_comparison_df$state_abbr <- state_abbr_value
+      policy_comparison_df$state_name <- comparison_states$state_name[state_idx]
+      policy_comparison_df$policy_year <- state_policy_row$policy_year[1]
+      policy_comparison_df$tax_increase_dollar <- state_policy_row$tax_increase_dollar[1]
+      policy_comparison_df
+    }
+  )
+)
+
+policy_annual_comparison_df$current_model_abs_pct_deviation <- ifelse(
+  !is.na(policy_annual_comparison_df$observed_tax_revenue) &
+    policy_annual_comparison_df$observed_tax_revenue != 0,
+  abs(
+    policy_annual_comparison_df$tax_revenue_model_current_model -
+      policy_annual_comparison_df$observed_tax_revenue
+  ) / policy_annual_comparison_df$observed_tax_revenue * 100,
+  NA_real_
+)
+
+policy_annual_comparison_df$inflation_adjusted_scaled_abs_pct_deviation <- ifelse(
+  !is.na(policy_annual_comparison_df$observed_tax_revenue) &
+    policy_annual_comparison_df$observed_tax_revenue != 0,
+  abs(
+    policy_annual_comparison_df$tax_revenue_model_scaled_inflation_adjusted -
+      policy_annual_comparison_df$observed_tax_revenue
+  ) / policy_annual_comparison_df$observed_tax_revenue * 100,
+  NA_real_
+)
+
+abstract_overall_summary_df <- data.frame(
+  metric = c(
+    "Average absolute percentage deviation before adjustment",
+    "Average absolute percentage deviation after inflation adjustment and scaling"
+  ),
+  value_percent = c(
+    mean(policy_annual_comparison_df$current_model_abs_pct_deviation, na.rm = TRUE),
+    mean(policy_annual_comparison_df$inflation_adjusted_scaled_abs_pct_deviation, na.rm = TRUE)
+  ),
+  stringsAsFactors = FALSE
+)
+
+abstract_state_2022_df <- policy_annual_comparison_df[
+  policy_annual_comparison_df$state_abbr %in% c("KY", "PA") &
+    policy_annual_comparison_df$Calendar_Year == 2022,
+  c(
+    "state_abbr",
+    "Calendar_Year",
+    "observed_tax_revenue",
+    "tax_revenue_model_scaled_inflation_adjusted"
+  ),
+  drop = FALSE
+]
+abstract_state_2022_df$Fiscal_Year <- paste0("FY", abstract_state_2022_df$Calendar_Year)
+abstract_state_2022_df$Calendar_Year <- NULL
+abstract_state_2022_df <- abstract_state_2022_df[, c(
+  "state_abbr",
+  "Fiscal_Year",
+  "observed_tax_revenue",
+  "tax_revenue_model_scaled_inflation_adjusted"
+)]
+names(abstract_state_2022_df)[names(abstract_state_2022_df) == "observed_tax_revenue"] <- "observed"
+names(abstract_state_2022_df)[names(abstract_state_2022_df) == "tax_revenue_model_scaled_inflation_adjusted"] <- "final"
+abstract_state_2022_df$difference_dollar <-
+  abstract_state_2022_df$final -
+  abstract_state_2022_df$observed
+abstract_state_2022_df$difference_percent <-
+  ifelse(
+    !is.na(abstract_state_2022_df$observed) &
+      abstract_state_2022_df$observed != 0,
+    abstract_state_2022_df$difference_dollar /
+      abstract_state_2022_df$observed * 100,
+    NA_real_
+  )
+names(abstract_state_2022_df)[names(abstract_state_2022_df) == "difference_dollar"] <- "diff_dollar"
+names(abstract_state_2022_df)[names(abstract_state_2022_df) == "difference_percent"] <- "diff_percent"
+
+abstract_summary_lines <- c(
+  sprintf(
+    "Average absolute percentage deviation improved from %.2f%% to %.2f%%.",
+    abstract_overall_summary_df$value_percent[1],
+    abstract_overall_summary_df$value_percent[2]
+  )
+)
+
+ky_2022_row <- abstract_state_2022_df[abstract_state_2022_df$state_abbr == "KY", , drop = FALSE]
+pa_2022_row <- abstract_state_2022_df[abstract_state_2022_df$state_abbr == "PA", , drop = FALSE]
+
+abstract_summary_lines <- c(
+  abstract_summary_lines,
+  sprintf(
+    "FY2022 %s: observed revenue = US$%.1f million; modeled revenue after inflation adjustment and scaling = US$%.1f million; difference = %.2f%%.",
+    "Kentucky",
+    ky_2022_row$observed / 1000000,
+    ky_2022_row$final / 1000000,
+    ky_2022_row$diff_percent
+  ),
+  sprintf(
+    "FY2022 %s: observed revenue = US$%.1f million; modeled revenue after inflation adjustment and scaling = US$%.1f million; difference = %.2f%%.",
+    "Pennsylvania",
+    pa_2022_row$observed / 1000000,
+    pa_2022_row$final / 1000000,
+    pa_2022_row$diff_percent
+  )
+)
+
+print(abstract_overall_summary_df)
+print(abstract_state_2022_df)
+cat(paste0(abstract_summary_lines, collapse = "\n"), "\n")
+
+
+#===============================================================================
+# Baseline cigarette consumption plots
+#===============================================================================
+dir.create(
+  file.path(output_dir, "baseline_consumption_plots"),
+  showWarnings = FALSE,
+  recursive = TRUE
+)
+
+modeled_consumption_plot_df <- aggregate(
+  cigarette_packs_smoked_per_year_total_model ~ state_abbr + Calendar_Year,
+  data = baseline_revenue_calculation,
+  FUN = function(x) sum(x, na.rm = TRUE)
+)
+names(modeled_consumption_plot_df)[3] <- "modeled_total_packs"
+
+observed_consumption_plot_df <- unique(
+  baseline_revenue_calculation[
+    ,
+    c("state_abbr", "Calendar_Year", "state_cig_sales_pack_in_million"),
+    drop = FALSE
+  ]
+)
+observed_consumption_plot_df$observed_total_packs <-
+  observed_consumption_plot_df$state_cig_sales_pack_in_million * 1000000
+observed_consumption_plot_df$state_cig_sales_pack_in_million <- NULL
+
+state_year_consumption_plot_df <- merge(
+  modeled_consumption_plot_df,
+  observed_consumption_plot_df,
+  by = c("state_abbr", "Calendar_Year"),
+  all = TRUE,
+  sort = TRUE
+)
+state_year_consumption_plot_df$Fiscal_Year_End <-
+  fiscal_year_end_date(state_year_consumption_plot_df$Calendar_Year)
+
+for (state_abbr in unique(state_year_consumption_plot_df$state_abbr)) {
+  state_plot_df <- state_year_consumption_plot_df[
+    state_year_consumption_plot_df$state_abbr == state_abbr,
+    ,
+    drop = FALSE
+  ]
+
+  plot_df <- rbind(
+    data.frame(
+      Calendar_Year = state_plot_df$Calendar_Year,
+      Fiscal_Year_End = state_plot_df$Fiscal_Year_End,
+      total_packs = state_plot_df$observed_total_packs,
+      series = "Actual total packs",
+      stringsAsFactors = FALSE
+    ),
+    data.frame(
+      Calendar_Year = state_plot_df$Calendar_Year,
+      Fiscal_Year_End = state_plot_df$Fiscal_Year_End,
+      total_packs = state_plot_df$modeled_total_packs,
+      series = "Modeled total packs",
+      stringsAsFactors = FALSE
+    )
+  )
+
+  p <- ggplot2::ggplot(
+    plot_df,
+    ggplot2::aes(x = Fiscal_Year_End, y = total_packs, color = series)
+  ) +
+    ggplot2::geom_line(linewidth = 1) +
+    ggplot2::geom_point(size = 1.8) +
+    ggplot2::scale_color_manual(
+      values = c(
+        "Actual total packs" = "#1f77b4",
+        "Modeled total packs" = "#d62728"
+      )
+    ) +
+    ggplot2::scale_x_date(
+      breaks = fiscal_year_end_date(seq(year_min, year_max, by = 1)),
+      labels = fiscal_year_labels
+    ) +
+    ggplot2::scale_y_continuous(
+      labels = function(x) format(x, scientific = FALSE, trim = TRUE, big.mark = ",")
+    ) +
+    ggplot2::labs(
+      title = paste(state_abbr, "Consumption Comparison"),
+      subtitle = "Actual total packs vs modeled total packs",
+      x = "Fiscal year end (June 30)",
+      y = "Total packs",
+      color = NULL
+    ) +
+    ggplot2::theme_minimal(base_size = 12) +
+    ggplot2::theme(
+      legend.position = "top",
+      panel.grid.minor = ggplot2::element_blank(),
+      panel.background = ggplot2::element_rect(fill = "white", color = NA),
+      plot.background = ggplot2::element_rect(fill = "white", color = NA),
+      legend.background = ggplot2::element_rect(fill = "white", color = NA),
+      legend.key = ggplot2::element_rect(fill = "white", color = NA)
+    )
+
+  ggplot2::ggsave(
+    filename = file.path(
+      output_dir,
+      "baseline_consumption_plots",
+      paste0("consumption_comparison_", state_abbr, ".png")
+    ),
+    plot = p,
+    width = 9,
+    height = 5,
+    dpi = 300,
+    bg = "white"
+  )
+}
+
+
+
