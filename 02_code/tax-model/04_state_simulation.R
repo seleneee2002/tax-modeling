@@ -3,7 +3,7 @@
 repo_root <- "/Users/wangmengyao/Desktop/Github/tax-modeling"
 input_root <- file.path(repo_root, "01_input_data")
 state_input_root <- file.path(input_root, "data", "state_inputs")
-output_dir <- file.path(repo_root, "03_output", format(Sys.Date(), "%Y-%m-%d"))
+output_dir <- file.path(repo_root, "03_output")
 dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
 price_file <- file.path(repo_root, "01_input_data", "cigarette_prices_by_state_2025.csv")
@@ -111,11 +111,11 @@ for (scenario_idx in seq_len(nrow(state_scenarios))) {
 
   simulation_rds_output_path <- file.path(
     output_dir,
-    paste0(tolower(state_abbr), "_tax_simulation_results.rds")
+    paste0(tolower(state_abbr), "_results.rds")
   )
   simulation_prevalence_output_path <- file.path(
     output_dir,
-    paste0(tolower(state_abbr), "_tax_simulation_prevalence.csv")
+    paste0(tolower(state_abbr), "_prevalence.csv")
   )
 
   baseline_effects <- list(

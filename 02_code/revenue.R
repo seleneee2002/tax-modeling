@@ -1,8 +1,22 @@
+mainDir <- "/Users/wangmengyao/Desktop/GitHub/tax-modeling/"
+setwd(file.path(mainDir))
 
+library(reshape2)
+library(readr)
+library(readxl)
+library(cdlTools)
+library(haven)
+library(dplyr)
+library(stringr)
+library(lubridate)
+library(ggplot2)
+library(ggrepel)
 
 repo_root <- "/Users/wangmengyao/Desktop/Github/tax-modeling"
-output_dir <- file.path(repo_root, "03_output", format(Sys.Date(), "%Y-%m-%d"))
-dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+data_output_dir <- file.path(repo_root, "03_output")
+report_output_dir <- file.path(data_output_dir, format(Sys.Date(), "%Y-%m-%d"))
+dir.create(data_output_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(report_output_dir, recursive = TRUE, showWarnings = FALSE)
 year_min <- 2010L
 year_max <- 2022L
 consumption_elasticity <- -0.2
@@ -228,16 +242,13 @@ output_df$smokers <- output_df$prevalence * output_df$population
 
 utils::write.csv(
   output_df,
-  file.path(output_dir, "baseline_results.csv"),
+  file.path(report_output_dir, "baseline_results.csv"),
   row.names = FALSE
 )
 
 
 #===============================================================================
 # Baseline revenue model
-#===============================================================================
-
-
 # Dataset Merge
 baseline_df <- merge(
   output_df[, c(
@@ -437,12 +448,12 @@ baseline_revenue$row_id <- NULL
 
 openxlsx::write.xlsx(
   population_reference_df,
-  file.path(output_dir, "population_reference.xlsx"),
+  file.path(data_output_dir, "population_reference.xlsx"),
   overwrite = TRUE
 )
 openxlsx::write.xlsx(
   baseline_revenue,
-  file.path(output_dir, "baseline_revenue.xlsx"),
+  file.path(report_output_dir, "baseline_revenue.xlsx"),
   overwrite = TRUE
 )
 
@@ -532,7 +543,7 @@ baseline_revenue_calculation$state_revenue_real <-
 
 openxlsx::write.xlsx(
   baseline_revenue_calculation,
-  file.path(output_dir, "baseline_revenue_calculation.xlsx"),
+  file.path(report_output_dir, "baseline_revenue_calculation.xlsx"),
   overwrite = TRUE
 )
 
@@ -634,13 +645,7 @@ baseline_revenue_calculation$state_revenue_model_scaled <-
 
 openxlsx::write.xlsx(
   baseline_revenue_calculation,
-  file.path(output_dir, "baseline_revenue_calculation.xlsx"),
-  overwrite = TRUE
-)
-
-openxlsx::write.xlsx(
-  pa_scaling_factor_df,
-  file.path(output_dir, "pa_scaling_factor.xlsx"),
+  file.path(report_output_dir, "baseline_revenue_calculation.xlsx"),
   overwrite = TRUE
 )
 
@@ -648,12 +653,12 @@ openxlsx::write.xlsx(
 # Plot
 #===============================================================================
 dir.create(
-  file.path(output_dir, "baseline_revenue_plots"),
+  file.path(report_output_dir, "baseline_revenue_plots"),
   showWarnings = FALSE,
   recursive = TRUE
 )
 dir.create(
-  file.path(output_dir, "baseline_revenue_plots_pdf_6up"),
+  file.path(report_output_dir, "baseline_revenue_plots_pdf_6up"),
   showWarnings = FALSE,
   recursive = TRUE
 )
@@ -728,8 +733,9 @@ if (!is.null(state_tax_events_df) && nrow(state_tax_events_df) > 0) {
     sort = FALSE
   )
   state_tax_events_df$label <- paste0(
-    "Tax +$",
-    formatC(state_tax_events_df$increase_dollar, format = "f", digits = 2)
+    "$",
+    formatC(state_tax_events_df$increase_dollar, format = "fg", digits = 3),
+    " increase"
   )
 }
 
@@ -793,9 +799,9 @@ total_revenue_plot <- ggplot2::ggplot(
 
 ggplot2::ggsave(
   filename = file.path(
-    output_dir,
+    report_output_dir,
     "baseline_revenue_plots",
-    "revenue_comparison_total.png"
+    "rev_total.png"
   ),
   plot = total_revenue_plot,
   width = 18,
@@ -894,7 +900,7 @@ for (group_idx in seq_along(state_abbr_groups)) {
 
   ggplot2::ggsave(
     filename = file.path(
-      output_dir,
+      report_output_dir,
       "baseline_revenue_plots_pdf_6up",
       paste0("revenue_comparison_states_", sprintf("%02d", group_idx), ".pdf")
     ),
@@ -982,9 +988,9 @@ for (state_abbr in unique(state_year_revenue_plot_df$state_abbr)) {
 
   ggplot2::ggsave(
     filename = file.path(
-      output_dir,
+      report_output_dir,
       "baseline_revenue_plots",
-      paste0("revenue_comparison_", state_abbr, ".png")
+      paste0("rev_", tolower(state_abbr), ".png")
     ),
     plot = p,
     width = 9,
@@ -1014,40 +1020,268 @@ build_mortality_summary <- function(mort_obj, scenario_name) {
   df
 }
 
+build_prevalence_scenario_df <- function(result_obj, scenario_name, metadata) {
+  male_df <- build_long_df(
+    state_fips = metadata$state_fips,
+    state_abbr = metadata$state_abbr,
+    sex = "Male",
+    smokers_mat = result_obj$l_prev_out$m_M_smokers,
+    pop_mat = result_obj$l_prev_out$m_M_popAP
+  )
+  female_df <- build_long_df(
+    state_fips = metadata$state_fips,
+    state_abbr = metadata$state_abbr,
+    sex = "Female",
+    smokers_mat = result_obj$l_prev_out$m_F_smokers,
+    pop_mat = result_obj$l_prev_out$m_F_popAP
+  )
+
+  scenario_df <- rbind(male_df, female_df)
+  scenario_df$scenario <- scenario_name
+  scenario_df$policy_year <- as.integer(metadata$policy_year)
+  scenario_df$tax_increase_dollar <- as.numeric(metadata$tax_increase_dollar)
+  scenario_df$inflation_adjustment_rate <- as.numeric(metadata$inflation_adjustment_rate)
+  scenario_df
+}
+
 build_simulation_prevalence_df_from_results <- function(simulation_results) {
   metadata <- simulation_results$metadata
-  state_fips_value <- metadata$state_fips
-  state_abbr_value <- metadata$state_abbr
-
-  build_scenario_df <- function(result_obj, scenario_name) {
-    male_df <- build_long_df(
-      state_fips = state_fips_value,
-      state_abbr = state_abbr_value,
-      sex = "Male",
-      smokers_mat = result_obj$l_prev_out$m_M_smokers,
-      pop_mat = result_obj$l_prev_out$m_M_popAP
-    )
-    female_df <- build_long_df(
-      state_fips = state_fips_value,
-      state_abbr = state_abbr_value,
-      sex = "Female",
-      smokers_mat = result_obj$l_prev_out$m_F_smokers,
-      pop_mat = result_obj$l_prev_out$m_F_popAP
-    )
-
-    scenario_df <- rbind(male_df, female_df)
-    scenario_df$scenario <- scenario_name
-    scenario_df$policy_year <- as.integer(metadata$policy_year)
-    scenario_df$tax_increase_dollar <- as.numeric(metadata$tax_increase_dollar)
-    scenario_df$inflation_adjustment_rate <- as.numeric(metadata$inflation_adjustment_rate)
-    scenario_df
-  }
 
   rbind(
-    build_scenario_df(simulation_results$baseline, "baseline"),
-    build_scenario_df(simulation_results$current_model, "current_model"),
-    build_scenario_df(simulation_results$inflation_adjusted, "inflation_adjusted")
+    build_prevalence_scenario_df(simulation_results$baseline, "baseline", metadata),
+    build_prevalence_scenario_df(simulation_results$current_model, "current_model", metadata),
+    build_prevalence_scenario_df(simulation_results$inflation_adjusted, "inflation_scaling", metadata)
   )
+}
+
+aggregate_year_sum <- function(df, value_col) {
+  out_df <- stats::aggregate(
+    df[[value_col]],
+    by = list(Calendar_Year = df$Calendar_Year),
+    FUN = function(x) sum(x, na.rm = TRUE)
+  )
+  names(out_df)[2] <- value_col
+  out_df
+}
+
+aggregate_year_first <- function(df, value_col) {
+  out_df <- stats::aggregate(
+    df[[value_col]],
+    by = list(Calendar_Year = df$Calendar_Year),
+    FUN = function(x) x[which.max(!is.na(x))][1]
+  )
+  names(out_df)[2] <- value_col
+  out_df
+}
+
+prepare_policy_scenario_df <- function(
+  revenue_template,
+  prevalence_df,
+  merge_keys,
+  scenario_name,
+  policy_year_value,
+  additional_tax_dollar,
+  pre_policy_tax_rate,
+  init_price_value,
+  apply_inflation_adjustment,
+  apply_consumption_adjustment,
+  average_cpd_lookup_df
+) {
+  scenario_df <- merge(
+    revenue_template,
+    prevalence_df[, c(merge_keys, "prevalence")],
+    by = merge_keys,
+    all.x = TRUE,
+    sort = FALSE
+  )
+
+  scenario_df$smokers <- scenario_df$prevalence * scenario_df$population
+  scenario_df$scenario <- scenario_name
+  scenario_df$tax_increase_dollar_effective <- if (apply_inflation_adjustment) {
+    inflation_adjusted_tax_increase(
+      additional_tax_dollar,
+      scenario_df$Calendar_Year,
+      policy_year_value
+    )
+  } else {
+    ifelse(scenario_df$Calendar_Year >= policy_year_value, additional_tax_dollar, 0)
+  }
+  scenario_df$scenario_tax_rate_dollar <- ifelse(
+    scenario_df$Calendar_Year >= policy_year_value,
+    pre_policy_tax_rate + scenario_df$tax_increase_dollar_effective,
+    scenario_df$state_tax_rate_dollar
+  )
+  scenario_df$price_before_tax_dollar <- ifelse(
+    scenario_df$Calendar_Year >= policy_year_value,
+    init_price_value,
+    NA_real_
+  )
+  scenario_df$price_after_tax_dollar <- ifelse(
+    scenario_df$Calendar_Year >= policy_year_value,
+    init_price_value + scenario_df$tax_increase_dollar_effective,
+    NA_real_
+  )
+  scenario_df$percentage_change_in_price <- ifelse(
+    scenario_df$Calendar_Year >= policy_year_value &
+      !is.na(scenario_df$price_before_tax_dollar) &
+      scenario_df$price_before_tax_dollar > 0,
+    (scenario_df$price_after_tax_dollar - scenario_df$price_before_tax_dollar) /
+      scenario_df$price_before_tax_dollar,
+    0
+  )
+  scenario_df$consumption_elasticity <- ifelse(
+    scenario_df$Calendar_Year >= policy_year_value &
+      additional_tax_dollar > 0 &
+      apply_consumption_adjustment,
+    consumption_elasticity,
+    0
+  )
+  scenario_df$cpd_pct_change <-
+    scenario_df$consumption_elasticity * scenario_df$percentage_change_in_price
+
+  match_idx <- match(
+    paste(scenario_df$state_fips, scenario_df$sex, scenario_df$AGE, scenario_df$Calendar_Year, sep = "|"),
+    average_cpd_lookup_df$key
+  )
+  scenario_df$cpd_after_tax <-
+    average_cpd_lookup_df$average_cpd_smokers[match_idx] * (1 + scenario_df$cpd_pct_change)
+
+  scenario_df$cigarette_packs_smoked_per_year_per_smoker_adjusted <-
+    scenario_df$cigarette_packs_smoked_per_year_per_smoker * (1 + scenario_df$cpd_pct_change)
+  scenario_df$packs_smoked_model <-
+    scenario_df$smokers * scenario_df$cigarette_packs_smoked_per_year_per_smoker_adjusted
+  scenario_df$tax_revenue_model <-
+    scenario_df$scenario_tax_rate_dollar * scenario_df$packs_smoked_model
+
+  scenario_df
+}
+
+build_policy_summary <- function(
+  scenario_df,
+  observed_df,
+  scenario_name,
+  apply_inflation_adjustment,
+  inflation_adjustment_rate_value
+) {
+  total_population_df <- aggregate_year_sum(scenario_df, "population")
+  total_smokers_df <- aggregate_year_sum(scenario_df, "smokers")
+  total_packs_df <- aggregate_year_sum(scenario_df, "packs_smoked_model")
+  total_revenue_df <- aggregate_year_sum(scenario_df, "tax_revenue_model")
+  tax_rate_df <- aggregate_year_first(scenario_df, "scenario_tax_rate_dollar")
+  effective_tax_df <- aggregate_year_first(scenario_df, "tax_increase_dollar_effective")
+  price_before_df <- aggregate_year_first(scenario_df, "price_before_tax_dollar")
+  price_after_df <- aggregate_year_first(scenario_df, "price_after_tax_dollar")
+  price_change_df <- aggregate_year_first(scenario_df, "percentage_change_in_price")
+  elasticity_df <- aggregate_year_first(scenario_df, "consumption_elasticity")
+  cpd_change_df <- aggregate_year_first(scenario_df, "cpd_pct_change")
+  cpd_after_tax_df <- stats::aggregate(
+    scenario_df$cpd_after_tax,
+    by = list(Calendar_Year = scenario_df$Calendar_Year),
+    FUN = function(x) mean(x, na.rm = TRUE)
+  )
+  names(cpd_after_tax_df)[2] <- "cpd_after_tax"
+
+  summary_df <- Reduce(
+    function(x, y) merge(x, y, by = "Calendar_Year", all = TRUE, sort = TRUE),
+    list(
+      total_population_df,
+      total_smokers_df,
+      total_packs_df,
+      total_revenue_df,
+      tax_rate_df,
+      effective_tax_df,
+      price_before_df,
+      price_after_df,
+      price_change_df,
+      elasticity_df,
+      cpd_change_df,
+      cpd_after_tax_df
+    )
+  )
+
+  names(summary_df) <- c(
+    "Calendar_Year",
+    "total_population",
+    "total_smokers",
+    "packs_smoked_model",
+    "tax_revenue_model",
+    "state_tax_rate_dollar",
+    "tax_increase_dollar_effective",
+    "price_before_tax_dollar",
+    "price_after_tax_dollar",
+    "percentage_change_in_price",
+    "consumption_elasticity",
+    "cpd_pct_change",
+    "cpd_after_tax"
+  )
+
+  summary_df$prevalence <- ifelse(
+    summary_df$total_population > 0,
+    summary_df$total_smokers / summary_df$total_population,
+    NA_real_
+  )
+
+  summary_df <- merge(
+    summary_df,
+    observed_df[, c(
+      "Calendar_Year",
+      "observed_state_cig_pack_per_capita",
+      "observed_state_tax_rate_dollar",
+      "observed_taxed_packs_sold",
+      "observed_tax_revenue"
+    )],
+    by = "Calendar_Year",
+    all.x = TRUE,
+    sort = TRUE
+  )
+
+  summary_df$model_packs_per_capita <- ifelse(
+    summary_df$total_population > 0,
+    summary_df$packs_smoked_model / summary_df$total_population,
+    NA_real_
+  )
+  summary_df$tbot_to_model_scaling_factor <- ifelse(
+    !is.na(summary_df$model_packs_per_capita) &
+      summary_df$model_packs_per_capita > 0,
+    summary_df$observed_state_cig_pack_per_capita / summary_df$model_packs_per_capita,
+    NA_real_
+  )
+  summary_df$tax_revenue_model_scaled <-
+    summary_df$tax_revenue_model * summary_df$tbot_to_model_scaling_factor
+  summary_df$scenario <- scenario_name
+  summary_df$inflation_adjustment_rate <- ifelse(
+    apply_inflation_adjustment,
+    inflation_adjustment_rate_value,
+    NA_real_
+  )
+  summary_df$inflation_adjustment_applied <- apply_inflation_adjustment
+
+  summary_df[, c(
+    "scenario",
+    "Calendar_Year",
+    "inflation_adjustment_applied",
+    "inflation_adjustment_rate",
+    "state_tax_rate_dollar",
+    "tax_increase_dollar_effective",
+    "price_before_tax_dollar",
+    "price_after_tax_dollar",
+    "percentage_change_in_price",
+    "consumption_elasticity",
+    "cpd_pct_change",
+    "cpd_after_tax",
+    "total_population",
+    "total_smokers",
+    "prevalence",
+    "packs_smoked_model",
+    "model_packs_per_capita",
+    "observed_state_cig_pack_per_capita",
+    "observed_state_tax_rate_dollar",
+    "observed_taxed_packs_sold",
+    "observed_tax_revenue",
+    "tax_revenue_model",
+    "tbot_to_model_scaling_factor",
+    "tax_revenue_model_scaled"
+  )]
 }
 
 for (state_idx in seq_len(nrow(comparison_states))) {
@@ -1055,14 +1289,14 @@ for (state_idx in seq_len(nrow(comparison_states))) {
   state_abbr_value <- comparison_states$state_abbr[state_idx]
   state_name_value <- comparison_states$state_name[state_idx]
   simulation_prevalence_path <- file.path(
-    output_dir,
-    paste0(tolower(state_abbr_value), "_tax_simulation_prevalence.csv")
+    data_output_dir,
+    paste0(tolower(state_abbr_value), "_prevalence.csv")
   )
 
   if (!file.exists(simulation_prevalence_path)) {
     simulation_results_path <- file.path(
-      output_dir,
-      paste0(tolower(state_abbr_value), "_tax_simulation_results.rds")
+      data_output_dir,
+      paste0(tolower(state_abbr_value), "_results.rds")
     )
 
     if (!file.exists(simulation_results_path)) {
@@ -1147,274 +1381,98 @@ for (state_idx in seq_len(nrow(comparison_states))) {
   observed_df$state_cig_sales_pack_in_million <- NULL
   observed_df$state_tax_revenue_in_thousand <- NULL
 
-  build_state_policy_summary <- function(
-    prevalence_df,
-    additional_tax_dollar,
-    scenario_name,
-    apply_inflation_adjustment,
-    apply_consumption_adjustment
-  ) {
-    scenario_df <- merge(
-      revenue_template,
-      prevalence_df[, c(merge_keys, "prevalence")],
-      by = merge_keys,
-      all.x = TRUE,
-      sort = FALSE
-    )
+  average_cpd_lookup_df <- baseline_revenue_calculation[
+    baseline_revenue_calculation$state_abbr == state_abbr_value,
+    c("state_fips", "sex", "AGE", "Calendar_Year", "average_cpd_smokers")
+  ]
+  average_cpd_lookup_df$key <- paste(
+    average_cpd_lookup_df$state_fips,
+    average_cpd_lookup_df$sex,
+    average_cpd_lookup_df$AGE,
+    average_cpd_lookup_df$Calendar_Year,
+    sep = "|"
+  )
 
-    scenario_df$smokers <- scenario_df$prevalence * scenario_df$population
-    scenario_df$scenario <- scenario_name
-    scenario_df$tax_increase_dollar_effective <- if (apply_inflation_adjustment) {
-      inflation_adjusted_tax_increase(
-        additional_tax_dollar,
-        scenario_df$Calendar_Year,
-        policy_year_value
-      )
-    } else {
-      ifelse(scenario_df$Calendar_Year >= policy_year_value, additional_tax_dollar, 0)
-    }
-    scenario_df$scenario_tax_rate_dollar <- ifelse(
-      scenario_df$Calendar_Year >= policy_year_value,
-      pre_policy_tax_rate + scenario_df$tax_increase_dollar_effective,
-      scenario_df$state_tax_rate_dollar
-    )
-    scenario_df$price_before_tax_dollar <- ifelse(
-      scenario_df$Calendar_Year >= policy_year_value,
-      init_price_value,
-      NA_real_
-    )
-    scenario_df$price_after_tax_dollar <- ifelse(
-      scenario_df$Calendar_Year >= policy_year_value,
-      init_price_value + scenario_df$tax_increase_dollar_effective,
-      NA_real_
-    )
-    scenario_df$percentage_change_in_price <- ifelse(
-      scenario_df$Calendar_Year >= policy_year_value &
-        !is.na(scenario_df$price_before_tax_dollar) &
-        scenario_df$price_before_tax_dollar > 0,
-      (scenario_df$price_after_tax_dollar - scenario_df$price_before_tax_dollar) /
-        scenario_df$price_before_tax_dollar,
-      0
-    )
-    scenario_df$consumption_elasticity <- ifelse(
-      scenario_df$Calendar_Year >= policy_year_value &
-        additional_tax_dollar > 0 &
-        apply_consumption_adjustment,
-      consumption_elasticity,
-      0
-    )
-    scenario_df$cpd_pct_change <-
-      scenario_df$consumption_elasticity * scenario_df$percentage_change_in_price
-    scenario_df$cpd_after_tax <-
-      baseline_revenue_calculation$average_cpd_smokers[
-        match(
-          paste(scenario_df$state_fips, scenario_df$sex, scenario_df$AGE, scenario_df$Calendar_Year, sep = "|"),
-          paste(
-            baseline_revenue_calculation$state_fips,
-            baseline_revenue_calculation$sex,
-            baseline_revenue_calculation$AGE,
-            baseline_revenue_calculation$Calendar_Year,
-            sep = "|"
-          )
-        )
-      ] * (1 + scenario_df$cpd_pct_change)
-    cpd_adjustment_factor <- 1 + scenario_df$cpd_pct_change
-    scenario_df$cigarette_packs_smoked_per_year_per_smoker_adjusted <-
-      scenario_df$cigarette_packs_smoked_per_year_per_smoker *
-      cpd_adjustment_factor
-    scenario_df$packs_smoked_model <-
-      scenario_df$smokers * scenario_df$cigarette_packs_smoked_per_year_per_smoker_adjusted
-    scenario_df$tax_revenue_model <-
-      scenario_df$scenario_tax_rate_dollar * scenario_df$packs_smoked_model
-
-    total_population_df <- aggregate(
-      population ~ Calendar_Year,
-      data = scenario_df,
-      FUN = function(x) sum(x, na.rm = TRUE)
-    )
-    total_smokers_df <- aggregate(
-      smokers ~ Calendar_Year,
-      data = scenario_df,
-      FUN = function(x) sum(x, na.rm = TRUE)
-    )
-    total_packs_df <- aggregate(
-      packs_smoked_model ~ Calendar_Year,
-      data = scenario_df,
-      FUN = function(x) sum(x, na.rm = TRUE)
-    )
-    total_revenue_df <- aggregate(
-      tax_revenue_model ~ Calendar_Year,
-      data = scenario_df,
-      FUN = function(x) sum(x, na.rm = TRUE)
-    )
-    tax_rate_df <- aggregate(
-      scenario_tax_rate_dollar ~ Calendar_Year,
-      data = scenario_df,
-      FUN = function(x) x[which.max(!is.na(x))][1]
-    )
-    effective_tax_df <- aggregate(
-      tax_increase_dollar_effective ~ Calendar_Year,
-      data = scenario_df,
-      FUN = function(x) x[which.max(!is.na(x))][1]
-    )
-    price_before_df <- aggregate(
-      price_before_tax_dollar ~ Calendar_Year,
-      data = scenario_df,
-      FUN = function(x) x[which.max(!is.na(x))][1]
-    )
-    price_after_df <- aggregate(
-      price_after_tax_dollar ~ Calendar_Year,
-      data = scenario_df,
-      FUN = function(x) x[which.max(!is.na(x))][1]
-    )
-    percentage_change_in_price_df <- aggregate(
-      percentage_change_in_price ~ Calendar_Year,
-      data = scenario_df,
-      FUN = function(x) x[which.max(!is.na(x))][1]
-    )
-    elasticity_df <- aggregate(
-      consumption_elasticity ~ Calendar_Year,
-      data = scenario_df,
-      FUN = function(x) x[which.max(!is.na(x))][1]
-    )
-    cpd_change_df <- aggregate(
-      cpd_pct_change ~ Calendar_Year,
-      data = scenario_df,
-      FUN = function(x) x[which.max(!is.na(x))][1]
-    )
-    cpd_after_tax_df <- aggregate(
-      cpd_after_tax ~ Calendar_Year,
-      data = scenario_df,
-      FUN = function(x) mean(x, na.rm = TRUE)
-    )
-    summary_df <- Reduce(
-      function(x, y) merge(x, y, by = "Calendar_Year", all = TRUE, sort = TRUE),
-      list(
-        total_population_df,
-        total_smokers_df,
-        total_packs_df,
-        total_revenue_df,
-        tax_rate_df,
-        effective_tax_df,
-        price_before_df,
-        price_after_df,
-        percentage_change_in_price_df,
-        elasticity_df,
-        cpd_change_df,
-        cpd_after_tax_df
-      )
-    )
-
-    names(summary_df) <- c(
-      "Calendar_Year",
-      "total_population",
-      "total_smokers",
-      "packs_smoked_model",
-      "tax_revenue_model",
-      "state_tax_rate_dollar",
-      "tax_increase_dollar_effective",
-      "price_before_tax_dollar",
-      "price_after_tax_dollar",
-      "percentage_change_in_price",
-      "consumption_elasticity",
-      "cpd_pct_change",
-      "cpd_after_tax"
-    )
-
-    summary_df$prevalence <- ifelse(
-      summary_df$total_population > 0,
-      summary_df$total_smokers / summary_df$total_population,
-      NA_real_
-    )
-    summary_df <- merge(
-      summary_df,
-      observed_df[, c(
-        "Calendar_Year",
-        "observed_state_cig_pack_per_capita",
-        "observed_state_tax_rate_dollar",
-        "observed_taxed_packs_sold",
-        "observed_tax_revenue"
-      )],
-      by = "Calendar_Year",
-      all.x = TRUE,
-      sort = TRUE
-    )
-    summary_df$model_packs_per_capita <- ifelse(
-      summary_df$total_population > 0,
-      summary_df$packs_smoked_model / summary_df$total_population,
-      NA_real_
-    )
-    summary_df$tbot_to_model_scaling_factor <- ifelse(
-      !is.na(summary_df$model_packs_per_capita) &
-        summary_df$model_packs_per_capita > 0,
-      summary_df$observed_state_cig_pack_per_capita / summary_df$model_packs_per_capita,
-      NA_real_
-    )
-    summary_df$tax_revenue_model_scaled <-
-      summary_df$tax_revenue_model * summary_df$tbot_to_model_scaling_factor
-    summary_df$scenario <- scenario_name
-    summary_df$inflation_adjustment_rate <- ifelse(
-      apply_inflation_adjustment,
-      inflation_adjustment_rate_value,
-      NA_real_
-    )
-    summary_df$inflation_adjustment_applied <- apply_inflation_adjustment
-
-    summary_df[, c(
-      "scenario",
-      "Calendar_Year",
-      "inflation_adjustment_applied",
-      "inflation_adjustment_rate",
-      "state_tax_rate_dollar",
-      "tax_increase_dollar_effective",
-      "price_before_tax_dollar",
-      "price_after_tax_dollar",
-      "percentage_change_in_price",
-      "consumption_elasticity",
-      "cpd_pct_change",
-      "cpd_after_tax",
-      "total_population",
-      "total_smokers",
-      "prevalence",
-      "packs_smoked_model",
-      "model_packs_per_capita",
-      "observed_state_cig_pack_per_capita",
-      "observed_state_tax_rate_dollar",
-      "observed_taxed_packs_sold",
-      "observed_tax_revenue",
-      "tax_revenue_model",
-      "tbot_to_model_scaling_factor",
-      "tax_revenue_model_scaled"
-    )]
-  }
-
-  baseline_policy_summary <- build_state_policy_summary(
-    simulation_prevalence_df[simulation_prevalence_df$scenario == "baseline", , drop = FALSE],
-    additional_tax_dollar = 0,
+  baseline_policy_df <- prepare_policy_scenario_df(
+    revenue_template = revenue_template,
+    prevalence_df = simulation_prevalence_df[simulation_prevalence_df$scenario == "baseline", , drop = FALSE],
+    merge_keys = merge_keys,
     scenario_name = "baseline",
+    policy_year_value = policy_year_value,
+    additional_tax_dollar = 0,
+    pre_policy_tax_rate = pre_policy_tax_rate,
+    init_price_value = init_price_value,
     apply_inflation_adjustment = FALSE,
-    apply_consumption_adjustment = FALSE
+    apply_consumption_adjustment = FALSE,
+    average_cpd_lookup_df = average_cpd_lookup_df
   )
-  current_model_summary <- build_state_policy_summary(
-    simulation_prevalence_df[simulation_prevalence_df$scenario == "current_model", , drop = FALSE],
-    additional_tax_dollar = tax_increase_dollar_value,
+  current_model_df <- prepare_policy_scenario_df(
+    revenue_template = revenue_template,
+    prevalence_df = simulation_prevalence_df[simulation_prevalence_df$scenario == "current_model", , drop = FALSE],
+    merge_keys = merge_keys,
     scenario_name = "current_model",
-    apply_inflation_adjustment = FALSE,
-    apply_consumption_adjustment = FALSE
-  )
-  scaled_model_summary <- build_state_policy_summary(
-    simulation_prevalence_df[simulation_prevalence_df$scenario == "current_model", , drop = FALSE],
+    policy_year_value = policy_year_value,
     additional_tax_dollar = tax_increase_dollar_value,
-    scenario_name = "scaled_model",
+    pre_policy_tax_rate = pre_policy_tax_rate,
+    init_price_value = init_price_value,
     apply_inflation_adjustment = FALSE,
-    apply_consumption_adjustment = TRUE
+    apply_consumption_adjustment = FALSE,
+    average_cpd_lookup_df = average_cpd_lookup_df
   )
-  inflation_adjusted_summary <- build_state_policy_summary(
-    simulation_prevalence_df[simulation_prevalence_df$scenario == "inflation_adjusted", , drop = FALSE],
+  scaling_df <- prepare_policy_scenario_df(
+    revenue_template = revenue_template,
+    prevalence_df = simulation_prevalence_df[simulation_prevalence_df$scenario == "current_model", , drop = FALSE],
+    merge_keys = merge_keys,
+    scenario_name = "scaling",
+    policy_year_value = policy_year_value,
     additional_tax_dollar = tax_increase_dollar_value,
-    scenario_name = "inflation_adjusted",
+    pre_policy_tax_rate = pre_policy_tax_rate,
+    init_price_value = init_price_value,
+    apply_inflation_adjustment = FALSE,
+    apply_consumption_adjustment = TRUE,
+    average_cpd_lookup_df = average_cpd_lookup_df
+  )
+  inflation_scaling_df <- prepare_policy_scenario_df(
+    revenue_template = revenue_template,
+    prevalence_df = simulation_prevalence_df[simulation_prevalence_df$scenario == "inflation_adjusted", , drop = FALSE],
+    merge_keys = merge_keys,
+    scenario_name = "inflation_scaling",
+    policy_year_value = policy_year_value,
+    additional_tax_dollar = tax_increase_dollar_value,
+    pre_policy_tax_rate = pre_policy_tax_rate,
+    init_price_value = init_price_value,
     apply_inflation_adjustment = TRUE,
-    apply_consumption_adjustment = TRUE
+    apply_consumption_adjustment = TRUE,
+    average_cpd_lookup_df = average_cpd_lookup_df
+  )
+
+  baseline_policy_summary <- build_policy_summary(
+    baseline_policy_df,
+    observed_df,
+    "baseline",
+    FALSE,
+    inflation_adjustment_rate_value
+  )
+  current_model_summary <- build_policy_summary(
+    current_model_df,
+    observed_df,
+    "current_model",
+    FALSE,
+    inflation_adjustment_rate_value
+  )
+  scaling_summary <- build_policy_summary(
+    scaling_df,
+    observed_df,
+    "scaling",
+    FALSE,
+    inflation_adjustment_rate_value
+  )
+  inflation_scaling_summary <- build_policy_summary(
+    inflation_scaling_df,
+    observed_df,
+    "inflation_scaling",
+    TRUE,
+    inflation_adjustment_rate_value
   )
 
   summary_cols_for_wide <- setdiff(
@@ -1447,12 +1505,12 @@ for (state_idx in seq_len(nrow(comparison_states))) {
         "current_model"
       ),
       rename_summary_for_wide(
-        scaled_model_summary[scaled_model_summary$scenario == "scaled_model", , drop = FALSE],
-        "scaled_model"
+        scaling_summary[scaling_summary$scenario == "scaling", , drop = FALSE],
+        "scaling"
       ),
       rename_summary_for_wide(
-        inflation_adjusted_summary[inflation_adjusted_summary$scenario == "inflation_adjusted", , drop = FALSE],
-        "inflation_adjusted"
+        inflation_scaling_summary[inflation_scaling_summary$scenario == "inflation_scaling", , drop = FALSE],
+        "inflation_scaling"
       ),
       observed_df[, c(
         "Calendar_Year",
@@ -1464,30 +1522,37 @@ for (state_idx in seq_len(nrow(comparison_states))) {
     )
   )
 
+  policy_comparison_df$rev_model <- policy_comparison_df$tax_revenue_model_current_model
+  policy_comparison_df$rev_scaling <- policy_comparison_df$tax_revenue_model_scaled_scaling
+  policy_comparison_df$rev_inflation_scaling <- policy_comparison_df$tax_revenue_model_scaled_inflation_scaling
+  policy_comparison_df$packs_model <- policy_comparison_df$packs_smoked_model_current_model
+  policy_comparison_df$packs_scaling <- policy_comparison_df$packs_smoked_model_scaling
+  policy_comparison_df$packs_inflation_scaling <- policy_comparison_df$packs_smoked_model_inflation_scaling
+
   policy_comparison_df$current_model_vs_observed_revenue_gap <-
-    policy_comparison_df$tax_revenue_model_current_model -
+    policy_comparison_df$rev_model -
     policy_comparison_df$observed_tax_revenue
-  policy_comparison_df$scaled_model_vs_observed_revenue_gap <-
-    policy_comparison_df$tax_revenue_model_scaled_scaled_model -
+  policy_comparison_df$scaling_vs_observed_revenue_gap <-
+    policy_comparison_df$rev_scaling -
     policy_comparison_df$observed_tax_revenue
-  policy_comparison_df$inflation_adjusted_vs_observed_revenue_gap <-
-    policy_comparison_df$tax_revenue_model_scaled_inflation_adjusted -
+  policy_comparison_df$inflation_scaling_vs_observed_revenue_gap <-
+    policy_comparison_df$rev_inflation_scaling -
     policy_comparison_df$observed_tax_revenue
   policy_comparison_df$current_model_vs_observed_packs_gap <-
-    policy_comparison_df$packs_smoked_model_current_model -
+    policy_comparison_df$packs_model -
     policy_comparison_df$observed_taxed_packs_sold
-  policy_comparison_df$scaled_model_vs_observed_packs_gap <-
-    policy_comparison_df$packs_smoked_model_scaled_model -
+  policy_comparison_df$scaling_vs_observed_packs_gap <-
+    policy_comparison_df$packs_scaling -
     policy_comparison_df$observed_taxed_packs_sold
-  policy_comparison_df$inflation_adjusted_vs_observed_packs_gap <-
-    policy_comparison_df$packs_smoked_model_inflation_adjusted -
+  policy_comparison_df$inflation_scaling_vs_observed_packs_gap <-
+    policy_comparison_df$packs_inflation_scaling -
     policy_comparison_df$observed_taxed_packs_sold
 
   annual_summary_long <- rbind(
     baseline_policy_summary,
     current_model_summary,
-    scaled_model_summary,
-    inflation_adjusted_summary
+    scaling_summary,
+    inflation_scaling_summary
   )
 
   scaled_revenue_plot_df <- rbind(
@@ -1501,21 +1566,21 @@ for (state_idx in seq_len(nrow(comparison_states))) {
     data.frame(
       Calendar_Year = policy_comparison_df$Calendar_Year,
       Fiscal_Year_End = fiscal_year_end_date(policy_comparison_df$Calendar_Year),
-      revenue = policy_comparison_df$tax_revenue_model_current_model,
+      revenue = policy_comparison_df$rev_model,
       series = "Modeled revenue",
       stringsAsFactors = FALSE
     ),
     data.frame(
       Calendar_Year = policy_comparison_df$Calendar_Year,
       Fiscal_Year_End = fiscal_year_end_date(policy_comparison_df$Calendar_Year),
-      revenue = policy_comparison_df$tax_revenue_model_scaled_scaled_model,
-      series = "Modeled revenue + inflation adjustment",
+      revenue = policy_comparison_df$rev_scaling,
+      series = "Modeled revenue + scaling",
       stringsAsFactors = FALSE
     ),
     data.frame(
       Calendar_Year = policy_comparison_df$Calendar_Year,
       Fiscal_Year_End = fiscal_year_end_date(policy_comparison_df$Calendar_Year),
-      revenue = policy_comparison_df$tax_revenue_model_scaled_inflation_adjusted,
+      revenue = policy_comparison_df$rev_inflation_scaling,
       series = "Modeled revenue + inflation adjustment + scaling",
       stringsAsFactors = FALSE
     )
@@ -1523,35 +1588,61 @@ for (state_idx in seq_len(nrow(comparison_states))) {
 
   mortality_summary <- NULL
   simulation_results_path <- file.path(
-    output_dir,
-    paste0(tolower(state_abbr_value), "_tax_simulation_results.rds")
+    data_output_dir,
+    paste0(tolower(state_abbr_value), "_results.rds")
   )
   if (file.exists(simulation_results_path)) {
     simulation_results <- readRDS(simulation_results_path)
     mortality_summary <- rbind(
       build_mortality_summary(simulation_results$baseline, "baseline"),
       build_mortality_summary(simulation_results$current_model, "current_model"),
-      build_mortality_summary(simulation_results$inflation_adjusted, "inflation_adjusted")
+      build_mortality_summary(simulation_results$inflation_adjusted, "inflation_scaling")
     )
   }
+
+  policy_revenue_label_df <- data.frame(
+    Fiscal_Year_End = fiscal_year_end_date(policy_year_value),
+    label_y = max(scaled_revenue_plot_df$revenue, na.rm = TRUE) * 1.03,
+    label = paste0(
+      "$",
+      formatC(tax_increase_dollar_value, format = "fg", digits = 3),
+      " increase"
+    ),
+    stringsAsFactors = FALSE
+  )
 
   scaled_revenue_plot <- ggplot2::ggplot(
     scaled_revenue_plot_df,
     ggplot2::aes(x = Fiscal_Year_End, y = revenue, color = series)
   ) +
+    ggplot2::geom_vline(
+      xintercept = as.numeric(fiscal_year_end_date(policy_year_value)),
+      linetype = "dashed",
+      color = "gray40",
+      linewidth = 0.6
+    ) +
+    ggplot2::geom_text(
+      data = policy_revenue_label_df,
+      ggplot2::aes(x = Fiscal_Year_End, y = label_y, label = label),
+      inherit.aes = FALSE,
+      vjust = 0,
+      hjust = 0.5,
+      size = 3.5,
+      color = "gray25"
+    ) +
     ggplot2::geom_line(linewidth = 1.1) +
     ggplot2::geom_point(size = 2.2) +
     ggplot2::scale_color_manual(
       breaks = c(
         "Observed revenue",
         "Modeled revenue",
-        "Modeled revenue + inflation adjustment",
+        "Modeled revenue + scaling",
         "Modeled revenue + inflation adjustment + scaling"
       ),
       values = c(
         "Observed revenue" = "#1f77b4",
         "Modeled revenue" = "#d62728",
-        "Modeled revenue + inflation adjustment" = "#ff7f0e",
+        "Modeled revenue + scaling" = "#ff7f0e",
         "Modeled revenue + inflation adjustment + scaling" = "#2ca02c"
       )
     ) +
@@ -1560,7 +1651,8 @@ for (state_idx in seq_len(nrow(comparison_states))) {
       labels = fiscal_year_labels
     ) +
     ggplot2::scale_y_continuous(
-      labels = function(x) format(x, scientific = FALSE, trim = TRUE, big.mark = ",")
+      labels = function(x) format(x, scientific = FALSE, trim = TRUE, big.mark = ","),
+      expand = ggplot2::expansion(mult = c(0.02, 0.12))
     ) +
     ggplot2::labs(
       title = paste(state_name_value, "Revenue Comparison"),
@@ -1582,7 +1674,7 @@ for (state_idx in seq_len(nrow(comparison_states))) {
     )
 
   ggplot2::ggsave(
-    filename = file.path(output_dir, paste0(tolower(state_abbr_value), "_revenue_comparison.png")),
+    filename = file.path(report_output_dir, paste0(tolower(state_abbr_value), "_rev.png")),
     plot = scaled_revenue_plot,
     width = 10,
     height = 6,
@@ -1595,8 +1687,8 @@ for (state_idx in seq_len(nrow(comparison_states))) {
     annual_summary_long = annual_summary_long,
     baseline_summary = baseline_policy_summary,
     current_model_summary = current_model_summary,
-    scaled_model_summary = scaled_model_summary,
-    inflation_adjusted_summary = inflation_adjusted_summary,
+    scaled_model_summary = scaling_summary,
+    inflation_scaling_summary = inflation_scaling_summary,
     scaled_revenue_plot_data = scaled_revenue_plot_df
   )
   if (!is.null(mortality_summary)) {
@@ -1605,7 +1697,7 @@ for (state_idx in seq_len(nrow(comparison_states))) {
 
   openxlsx::write.xlsx(
     workbook_sheets,
-    file.path(output_dir, paste0(tolower(state_abbr_value), "_policy_comparison.xlsx")),
+    file.path(report_output_dir, paste0(tolower(state_abbr_value), "_policy_comparison.xlsx")),
     overwrite = TRUE
   )
 
@@ -1627,7 +1719,7 @@ policy_annual_comparison_df <- do.call(
         drop = FALSE
       ]
       policy_comparison_df <- openxlsx::read.xlsx(
-        file.path(output_dir, paste0(tolower(state_abbr_value), "_policy_comparison.xlsx")),
+        file.path(report_output_dir, paste0(tolower(state_abbr_value), "_policy_comparison.xlsx")),
         sheet = "annual_comparison"
       )
       policy_comparison_df$state_fips <- comparison_states$state_fips[state_idx]
@@ -1644,17 +1736,17 @@ policy_annual_comparison_df$current_model_abs_pct_deviation <- ifelse(
   !is.na(policy_annual_comparison_df$observed_tax_revenue) &
     policy_annual_comparison_df$observed_tax_revenue != 0,
   abs(
-    policy_annual_comparison_df$tax_revenue_model_current_model -
+    policy_annual_comparison_df$rev_model -
       policy_annual_comparison_df$observed_tax_revenue
   ) / policy_annual_comparison_df$observed_tax_revenue * 100,
   NA_real_
 )
 
-policy_annual_comparison_df$inflation_adjusted_scaled_abs_pct_deviation <- ifelse(
+policy_annual_comparison_df$inflation_scaling_abs_pct_deviation <- ifelse(
   !is.na(policy_annual_comparison_df$observed_tax_revenue) &
     policy_annual_comparison_df$observed_tax_revenue != 0,
   abs(
-    policy_annual_comparison_df$tax_revenue_model_scaled_inflation_adjusted -
+    policy_annual_comparison_df$rev_inflation_scaling -
       policy_annual_comparison_df$observed_tax_revenue
   ) / policy_annual_comparison_df$observed_tax_revenue * 100,
   NA_real_
@@ -1667,7 +1759,7 @@ abstract_overall_summary_df <- data.frame(
   ),
   value_percent = c(
     mean(policy_annual_comparison_df$current_model_abs_pct_deviation, na.rm = TRUE),
-    mean(policy_annual_comparison_df$inflation_adjusted_scaled_abs_pct_deviation, na.rm = TRUE)
+    mean(policy_annual_comparison_df$inflation_scaling_abs_pct_deviation, na.rm = TRUE)
   ),
   stringsAsFactors = FALSE
 )
@@ -1679,7 +1771,7 @@ abstract_state_2022_df <- policy_annual_comparison_df[
     "state_abbr",
     "Calendar_Year",
     "observed_tax_revenue",
-    "tax_revenue_model_scaled_inflation_adjusted"
+    "rev_inflation_scaling"
   ),
   drop = FALSE
 ]
@@ -1689,10 +1781,10 @@ abstract_state_2022_df <- abstract_state_2022_df[, c(
   "state_abbr",
   "Fiscal_Year",
   "observed_tax_revenue",
-  "tax_revenue_model_scaled_inflation_adjusted"
+  "rev_inflation_scaling"
 )]
 names(abstract_state_2022_df)[names(abstract_state_2022_df) == "observed_tax_revenue"] <- "observed"
-names(abstract_state_2022_df)[names(abstract_state_2022_df) == "tax_revenue_model_scaled_inflation_adjusted"] <- "final"
+names(abstract_state_2022_df)[names(abstract_state_2022_df) == "rev_inflation_scaling"] <- "final"
 abstract_state_2022_df$difference_dollar <-
   abstract_state_2022_df$final -
   abstract_state_2022_df$observed
@@ -1745,7 +1837,7 @@ cat(paste0(abstract_summary_lines, collapse = "\n"), "\n")
 # Baseline cigarette consumption plots
 #===============================================================================
 dir.create(
-  file.path(output_dir, "baseline_consumption_plots"),
+  file.path(report_output_dir, "baseline_consumption_plots"),
   showWarnings = FALSE,
   recursive = TRUE
 )
@@ -1784,6 +1876,12 @@ for (state_abbr in unique(state_year_consumption_plot_df$state_abbr)) {
     ,
     drop = FALSE
   ]
+  state_policy_year <- state_policy_configs$policy_year[
+    state_policy_configs$state_abbr == state_abbr
+  ][1]
+  state_tax_increase_dollar <- state_policy_configs$tax_increase_dollar[
+    state_policy_configs$state_abbr == state_abbr
+  ][1]
 
   plot_df <- rbind(
     data.frame(
@@ -1802,10 +1900,48 @@ for (state_abbr in unique(state_year_consumption_plot_df$state_abbr)) {
     )
   )
 
+  consumption_policy_label_df <- if (!is.na(state_policy_year)) {
+    data.frame(
+      Fiscal_Year_End = fiscal_year_end_date(state_policy_year),
+      label_y = max(plot_df$total_packs, na.rm = TRUE) * 1.03,
+      label = paste0(
+        "$",
+        formatC(state_tax_increase_dollar, format = "fg", digits = 3),
+        " increase"
+      ),
+      stringsAsFactors = FALSE
+    )
+  } else {
+    NULL
+  }
+
   p <- ggplot2::ggplot(
     plot_df,
     ggplot2::aes(x = Fiscal_Year_End, y = total_packs, color = series)
   ) +
+    {
+      if (!is.na(state_policy_year)) {
+        ggplot2::geom_vline(
+          xintercept = as.numeric(fiscal_year_end_date(state_policy_year)),
+          linetype = "dashed",
+          color = "gray40",
+          linewidth = 0.6
+        )
+      }
+    } +
+    {
+      if (!is.null(consumption_policy_label_df)) {
+        ggplot2::geom_text(
+          data = consumption_policy_label_df,
+          ggplot2::aes(x = Fiscal_Year_End, y = label_y, label = label),
+          inherit.aes = FALSE,
+          vjust = 0,
+          hjust = 0.5,
+          size = 3.5,
+          color = "gray25"
+        )
+      }
+    } +
     ggplot2::geom_line(linewidth = 1) +
     ggplot2::geom_point(size = 1.8) +
     ggplot2::scale_color_manual(
@@ -1819,7 +1955,8 @@ for (state_abbr in unique(state_year_consumption_plot_df$state_abbr)) {
       labels = fiscal_year_labels
     ) +
     ggplot2::scale_y_continuous(
-      labels = function(x) format(x, scientific = FALSE, trim = TRUE, big.mark = ",")
+      labels = function(x) format(x, scientific = FALSE, trim = TRUE, big.mark = ","),
+      expand = ggplot2::expansion(mult = c(0.02, 0.12))
     ) +
     ggplot2::labs(
       title = paste(state_abbr, "Consumption Comparison"),
@@ -1840,9 +1977,9 @@ for (state_abbr in unique(state_year_consumption_plot_df$state_abbr)) {
 
   ggplot2::ggsave(
     filename = file.path(
-      output_dir,
+      report_output_dir,
       "baseline_consumption_plots",
-      paste0("consumption_comparison_", state_abbr, ".png")
+      paste0("cons_", tolower(state_abbr), ".png")
     ),
     plot = p,
     width = 9,
@@ -1853,4 +1990,111 @@ for (state_abbr in unique(state_year_consumption_plot_df$state_abbr)) {
 }
 
 
+
+
+# =============================================================================
+# Pennsylvania revenue change around 2015 tax increase
+# Compare FY2016 -> FY2017, tax increase took effect in Aug 2016
+# and shows up in the fiscal year ending June 30, 2017.
+# =============================================================================
+
+pa_comparison_path <- file.path(report_output_dir, "pa_policy_comparison.xlsx")
+
+pa_policy_comparison <- openxlsx::read.xlsx(
+  pa_comparison_path,
+  sheet = "annual_comparison"
+)
+
+pa_rev_2016 <- pa_policy_comparison %>%
+  dplyr::filter(Calendar_Year == 2016)
+
+pa_rev_2017 <- pa_policy_comparison %>%
+  dplyr::filter(Calendar_Year == 2017)
+
+observed_revenue_change_pct <- 100 * (
+  pa_rev_2017$observed_tax_revenue - pa_rev_2016$observed_tax_revenue
+) / pa_rev_2016$observed_tax_revenue
+
+modeled_revenue_change_pct <- 100 * (
+  pa_rev_2017$rev_inflation_scaling -
+    pa_rev_2016$rev_inflation_scaling
+) / pa_rev_2016$rev_inflation_scaling
+
+modeled_revenue_change_pct_raw <- 100 * (
+  pa_rev_2017$rev_model -
+    pa_rev_2016$rev_model
+) / pa_rev_2016$rev_model
+
+cat(
+  sprintf(
+    "Pennsylvania: cigarette tax increase of $1 per pack in 2015, observed cigarette tax revenue changed by %.1f%%, compared with the inflation- and scaling-adjusted model change of %.1f%%.\n",
+    observed_revenue_change_pct,
+    modeled_revenue_change_pct
+  )
+)
+
+# -------------------------------------------------------------------------
+ky_comparison_path <- file.path(report_output_dir, "ky_policy_comparison.xlsx")
+
+ky_policy_comparison <- openxlsx::read.xlsx(
+  ky_comparison_path,
+  sheet = "annual_comparison"
+)
+
+ky_rev_before <- ky_policy_comparison %>%
+  dplyr::filter(Calendar_Year == 2018)
+
+ky_rev_after <- ky_policy_comparison %>%
+  dplyr::filter(Calendar_Year == 2019)
+
+ky_observed_revenue_change_pct <- 100 * (
+  ky_rev_after$observed_tax_revenue - ky_rev_before$observed_tax_revenue
+) / ky_rev_before$observed_tax_revenue
+
+ky_modeled_revenue_change_pct <- 100 * (
+  ky_rev_after$rev_inflation_scaling -
+    ky_rev_before$rev_inflation_scaling
+) / ky_rev_before$rev_inflation_scaling
+
+cat(
+  sprintf(
+    "Following the tax increase, observed cigarette tax revenue changed by %.1f%%, compared with the inflation- and scaling-adjusted model change of %.1f%%.\n",
+    ky_observed_revenue_change_pct,
+    ky_modeled_revenue_change_pct
+  )
+)
+
+
+# -------------------------------------------------------------------------
+ok_comparison_path <- file.path(report_output_dir, "ok_policy_comparison.xlsx")
+
+ok_policy_comparison <- openxlsx::read.xlsx(
+  ok_comparison_path,
+  sheet = "annual_comparison"
+)
+
+ok_rev_before <- ok_policy_comparison %>%
+  dplyr::filter(Calendar_Year == 2018)
+
+ok_rev_after <- ok_policy_comparison %>%
+  dplyr::filter(Calendar_Year == 2019)
+
+ok_observed_revenue_change_pct <- 100 * (
+  ok_rev_after$observed_tax_revenue - ok_rev_before$observed_tax_revenue
+) / ok_rev_before$observed_tax_revenue
+
+ok_modeled_revenue_change_pct <- 100 * (
+  ok_rev_after$rev_inflation_scaling -
+    ok_rev_before$rev_inflation_scaling
+) / ok_rev_before$rev_inflation_scaling
+
+cat(
+  sprintf(
+    "%.1f%% modeled versus %.1f%% observed for Oklahoma's $%.2f increase in %d.\n",
+    ok_modeled_revenue_change_pct,
+    ok_observed_revenue_change_pct,
+    1.00,
+    2018
+  )
+)
 
