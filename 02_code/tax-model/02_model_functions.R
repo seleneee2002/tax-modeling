@@ -1,39 +1,6 @@
+# Core functions
 
-
-#install.packages("usmap")  # only if not installed
-data(statepop, package = "usmap")
-packages <- c("ggplot2", "readxl", "readr", "dplyr", "tidyr", "reshape2","grid", 
-              "ggpubr", "gridBase", "gridExtra", "cdlTools", "stringr", "ggrepel")
-
-# Install packages not yet installed
-installed_packages <- packages %in% rownames(installed.packages())
-if (any(installed_packages == FALSE)) {
-  install.packages(packages[!installed_packages])}
-
-# Packages loading
-lapply(packages, library, character.only = TRUE)
-
-
-date_variable <- format(Sys.Date(), "%m.%d.%y")
-startbc <- 1908   # starting birth cohort 
-endbc <- 2100     # ending birth cohort
-endyear <- 2200   # final calendar year, extra 100 years needed for AC-AP conversion
-cohyears <- endbc-startbc+1     # number of cohort years
-totalyears<-length(startbc:endyear)
-v_calyears <- (startbc-startbc+1):(endbc-startbc+1) 
-v_stdbirths<- rep(1000000, times = 193)
-v_statefips <- c('01','02','04','05','06','08','09','10','11','12','13','15','16',
-                 '17','18','19','20','21','22','23','24','25','26','27','28','29',
-                 '30','31','32','33','34','35','36','37','38','39','40','41','42',
-                 '44','45','46','47','48','49','50','51','53','54','55','56')
-
-fips_to_abbr <- function(fips2) {
-  fips2 <- sprintf("%02d", as.integer(fips2))
-  lut <- setNames(usmap::statepop$abbr, usmap::statepop$fips)
-  abbr <- unname(lut[fips2])
-  if (is.na(abbr)) stop("Unknown state FIPS: ", fips2)
-  abbr
-}
+source("/Users/wangmengyao/Desktop/Github/tax-modeling/02_code/tax-model/00_config.R", local = TRUE)
 
 #===============================================================================
 # cohort life-course smoking transitions, output prevalence
@@ -140,7 +107,6 @@ generate_prevs <- function(startbc, gender, m_init.policy_AC, m_cess.policy_AC, 
               m_CSprevAP= m_CSprevAP, a_FSprevAP= a_FSprevAP, m_popAP= m_popAP, m_smokersAP= m_smokersAP)) 
 }
 
-
 #===============================================================================
 # Calculate number of SADs, and YLL using output from generate_prev function
 #===============================================================================
@@ -160,8 +126,22 @@ calculate_mort <- function(l_prev_outputs, m_p_mortNS_AP, m_p_mortCS_AP,
   
   df_SAD_AP <- as.data.frame(m_SAD_AP)
   v_SADyear <- colSums(df_SAD_AP)
-  
-  df_YLL_AP <- df_SAD_AP * m_NS.LE
+
+  # Convert life expectancy from age-cohort to age-period.
+  m_NS.LE_AP <- matrix(NA, nrow = 100, ncol = cohyears)
+  for (i in startbc:endbc) {
+    for (age in 0:99) {
+      byr <- i - age
+      if (byr < startbc) {
+        m_NS.LE_AP[age + 1, i - startbc + 1] <- m_NS.LE[age + 1, 1]
+      } else {
+        m_NS.LE_AP[age + 1, i - startbc + 1] <-
+          m_NS.LE[age + 1, byr - startbc + 1]
+      }
+    }
+  }
+
+  df_YLL_AP <- df_SAD_AP * m_NS.LE_AP
   v_YLLyear <- colSums(df_YLL_AP)
   
   m_SAD_AP <- as.matrix(df_SAD_AP)
@@ -173,10 +153,13 @@ calculate_mort <- function(l_prev_outputs, m_p_mortNS_AP, m_p_mortCS_AP,
   m_SAD_AC <- matrix(NA, nrow = n, ncol = m)
   m_YLL_AC <- matrix(NA, nrow = n, ncol = m)
   
-  for (i in 1:n) {
-    for (j in 1:m) {
-      m_SAD_AC[i, j - i + 1] <- m_SAD_AP[i, j]
-      m_YLL_AC[i, j - i + 1] <- m_YLL_AP[i, j]
+  for (i in seq_len(n)) {
+    for (j in seq_len(m)) {
+      cohort_index <- j - i + 1L
+      if (cohort_index >= 1L && cohort_index <= m) {
+        m_SAD_AC[i, cohort_index] <- m_SAD_AP[i, j]
+        m_YLL_AC[i, cohort_index] <- m_YLL_AP[i, j]
+      }
     }
   }
   
@@ -201,16 +184,17 @@ runstates <- function(fipscode, m.initiation.effect, m.cessation.effect){
   # Load state-specific census populations (2010-2019), smoking parameters, mortality, life expectancy
   # by smoking status, birth cohort, calendar year
   # CENSUS DATA REQUIRES SOME CLEANING FOR ANNUAL BIRTHS BY GENDER
-  state_inputs_dir <- if (exists("state_input_root", inherits = TRUE)) {
-    get("state_input_root", inherits = TRUE)
-  } else {
-    "data/state_inputs"
-  }
+  state_input_paths <- c(
+    file.path(state_input_root, "mort_rates", paste0("p.mort_", fipscode, ".RData")),
+    file.path(state_input_root, paste0("smk_", fipscode, ".RData")),
+    file.path(state_input_root, paste0("pop_", fipscode, ".RData")),
+    file.path(state_input_root, paste0("le_", fipscode, ".RData"))
+  )
 
-  load(file.path(state_inputs_dir, "mort_rates", paste0("p.mort_", fipscode, ".RData"))) #mortality
-  load(file.path(state_inputs_dir, paste0("smk_", fipscode, ".RData"))) #smoking init/cess cast as AC
-  load(file.path(state_inputs_dir, paste0("pop_", fipscode, ".RData"))) #census pop
-  load(file.path(state_inputs_dir, paste0("le_", fipscode, ".RData"))) #life expectacies
+  load(state_input_paths[1]) # mortality
+  load(state_input_paths[2]) # smoking initiation/cessation
+  load(state_input_paths[3]) # census population
+  load(state_input_paths[4]) # life expectancy
 
   
   # RUN STATUS QUO MODEL
@@ -343,7 +327,7 @@ runstates <- function(fipscode, m.initiation.effect, m.cessation.effect){
     df_CSprevbystate_temp$age <- paste0(minage, ".", maxage)
     df_CSprevbystate_temp$year <- rep(names(v_M.prev.minmax[1:cohyears]), 3)
     df_CSprevbystate_temp$state <- fipscode
-    df_CSprevbystate_temp$abbr <- fips_to_abbr(fipscode)
+    df_CSprevbystate_temp$abbr <- fips_abbr(fipscode)
     
     # Combine with the final data frame
     df_CSprevs.by.state <- rbind(df_CSprevs.by.state, df_CSprevbystate_temp)
@@ -354,13 +338,6 @@ runstates <- function(fipscode, m.initiation.effect, m.cessation.effect){
   
   #--------------format prev for output ----------------------------------------
   #-----------------------------------------------------------------------------
-  
-  m_M.smokers <- l_M.policy.prev$m_smokersAP
-  m_F.smokers <- l_F.policy.prev$m_smokersAP
-  m_M.popAP <- l_M.policy.prev$m_popAP
-  m_F.popAP <- l_F.policy.prev$m_popAP
-  m_M.CSprevAC <- cbind(l_M.policy.prev$m_CSprevAC, 'Male')
-  m_F.CSprevAC <- cbind(l_F.policy.prev$m_CSprevAC, 'Female')
   
   l_prev_out <- list(
     state = fipscode,
@@ -448,11 +425,15 @@ runstates <- function(fipscode, m.initiation.effect, m.cessation.effect){
   colnames(df_mort.outputs) <- c('YLL','YLLcum','SADs', 'SADcum', 'LYG', 'LYGcum',
                               'SADsAverted','SADsAvertedcum','year', 'gender' )
   df_mort.outputs$state <- fipscode
-  df_mort.outputs$abbr <- fips_to_abbr(fipscode)
-  df_mort.outputs <- df_mort.outputs %>% mutate(across(c('YLL','YLLcum','SADs',
-                                                         'SADcum', 'LYG', 'LYGcum', 
-                                                         'SADsAverted','SADsAvertedcum',
-                                                         'year'), as.numeric))
+  df_mort.outputs$abbr <- fips_abbr(fipscode)
+  mortality_numeric_columns <- c(
+    "YLL", "YLLcum", "SADs", "SADcum", "LYG", "LYGcum",
+    "SADsAverted", "SADsAvertedcum", "year"
+  )
+  df_mort.outputs[mortality_numeric_columns] <- lapply(
+    df_mort.outputs[mortality_numeric_columns],
+    as.numeric
+  )
 
 
   return(list(df_mort.outputs = df_mort.outputs, 
@@ -462,92 +443,251 @@ runstates <- function(fipscode, m.initiation.effect, m.cessation.effect){
 }
 
 #===============================================================================
-# Cigarette Tax
-#===============================================================================
-
-tax_effectCalculation <- function(initprice,tax,
-                                  startbc = 1908,endyear = 2200, policyYear,
-                                  inidecay  = 0.0, cesdecay  = 0.2,iniagemod = 1,cesagemod = 1,
-                                  apply_inflation_adjustment = FALSE,
+# Cigarette Tax Function
+tax_effectCalculation <- function(initprice, tax, startbc = 1908, endyear = 2200, policyYear,
+                                  cesdecay = 0.2, apply_inflation_adjustment = FALSE,
                                   inflation_adjustment_rate = 0.97) {
-  
-  ages    <- 0:99
+  ages <- 0:99
   periods <- startbc:endyear
   
-  nAges    <- length(ages)
-  nPeriods <- length(periods)
-  
-  # Define age-specific elasticities
-  ageeffects <- data.frame(
-    age = ages,
-    
-    # # Cessation elasticity by age group
-    # cess_elasticities = c(
-    #   rep(0, 18),           # Ages 0–17: no cessation assumed
-    #   rep(0, 8),         # Ages 18–25
-    #   rep(-1.11, 14),        # Ages 26–39
-    #   rep(-1.11, 60)         # Ages 40–99
-    # ),
-    # 
-    # # Initiation elasticity by age group
-    # init_elasticities = c(
-    #   rep(0, 18),           # Ages 0–17
-    #   rep(-0.423, 8),       # Ages 18–25 (He et al. 2025)
-    #   rep(0, 14),        # Ages 26–39 (Friedman & Pesko 2022) – treated as no reduction
-    #   rep(0, 60)         # Ages 40–99 (Friedman & Pesko 2022) – assumed as constant
-    # )
-    
-    # Cessation elasticity by age group
-    cess_elasticities = c(rep(0, 10), rep(-2.00, 90)),  # after age 10
-    init_elasticities = c(
-      rep(0, 10),    # ages 0-9
-      rep(-0.4, 8),  # ages 10-17
-      rep(-0.3, 7),  # ages 18-24
-      rep(-0.2, 20), # ages 25-44
-      rep(0, 55)     # ages 45-99
-    )
-    
-  
+  cess_elasticities <- c(rep(0, 10), rep(-2.0, 90))
+  init_elasticities <- c(
+    rep(0, 10), rep(-0.4, 8), rep(-0.3, 7),
+    rep(-0.2, 20), rep(0, 55)
   )
   
-  # Initialize effect matrices
-  m.initiation.effect <- matrix(1, nrow = nAges, ncol = nPeriods)
-  m.cessation.effect  <- matrix(1, nrow = nAges, ncol = nPeriods)
+  m.initiation.effect <- m.cessation.effect <- matrix(
+    1, nrow = length(ages), ncol = length(periods),
+    dimnames = list(NULL, as.character(periods))
+  )
   
-  colnames(m.initiation.effect) <- colnames(m.cessation.effect) <- as.character(periods)
-  
-  # Loop to fill matrices
-  for (j in seq_len(nPeriods)) {
-    currentYear <- periods[j]
+  for (j in which(periods >= policyYear)) {
+    time <- periods[j] - policyYear
+    inflation <- if (apply_inflation_adjustment) inflation_adjustment_rate^time else 1
+    newprice <- initprice + tax * inflation
+    pricechange <- (newprice - initprice) / ((newprice + initprice) / 2)
     
-    if (currentYear >= policyYear) {
-      timeSincePolicy <- currentYear - policyYear
-      inflation_adjustment_factor <- if (apply_inflation_adjustment) {
-        inflation_adjustment_rate ^ timeSincePolicy
-      } else {
-        1
-      }
-      adjusted_tax <- tax * inflation_adjustment_factor
-      newprice <- initprice + adjusted_tax
-      pricechange <- (newprice - initprice) / ((newprice + initprice) / 2)
-      
-      for (i in seq_len(nAges)) {
-        # Initiation elasticity
-        initEl <- ageeffects$init_elasticities[i]
-        initModifier <- 1 - (-pricechange * initEl)
-        m.initiation.effect[i, j] <- initModifier
-        
-        # Cessation elasticity
-        cessEl <- ageeffects$cess_elasticities[i]
-        cesseffect <- (-pricechange * cessEl) 
-        cessModifier <- 1 + cesseffect * (1 - cesdecay) ^ timeSincePolicy
-        m.cessation.effect[i, j]  <- cessModifier
-      }
-    }
+    m.initiation.effect[, j] <- 1 + pricechange * init_elasticities
+    m.cessation.effect[, j] <- 1 - pricechange * cess_elasticities * (1 - cesdecay)^time
   }
   
-  return(list(
+  list(
     m.initiation.effect = m.initiation.effect,
-    m.cessation.effect  = m.cessation.effect
+    m.cessation.effect = m.cessation.effect
+  )
+}
+
+#===============================================================================
+# Format model prevalence output for downstream analysis
+prevalence_long_df <- function(prev_out, scenario_name, state_fips, state_abbr, policy_year,
+                               tax_increase_dollar, year_min, year_max,
+                               inflation_rate = inflation_adjustment_rate) {
+  years <- as.integer(colnames(prev_out$m_M_popAP))
+  keep <- years >= year_min & years <= year_max
+  years <- years[keep]
+
+  sex_df <- function(smokers, population, sex) {
+    smokers <- smokers[, keep, drop = FALSE]
+    population <- population[, keep, drop = FALSE]
+    grid <- expand.grid(AGE = seq_len(nrow(population)) - 1L, Calendar_Year = years,
+                        KEEP.OUT.ATTRS = FALSE, stringsAsFactors = FALSE)
+
+    grid$scenario <- scenario_name
+    grid$policy_year <- policy_year
+    grid$tax_increase_dollar <- tax_increase_dollar
+    grid$inflation_adjustment_rate <- inflation_rate
+    grid$state_fips <- sprintf("%02d", as.integer(state_fips))
+    grid$state_abbr <- state_abbr
+    grid$sex <- sex
+    grid$START_YOB <- grid$Calendar_Year - grid$AGE
+    grid$END_YOB <- grid$START_YOB
+    grid$population <- as.vector(population)
+    grid$smokers <- as.vector(smokers)
+    grid$prevalence <- ifelse(grid$population > 0, grid$smokers / grid$population, NA_real_)
+
+    grid[, c(
+      "scenario", "policy_year", "tax_increase_dollar", "inflation_adjustment_rate",
+      "state_fips", "state_abbr", "sex", "START_YOB", "END_YOB", "AGE",
+      "Calendar_Year", "population", "smokers", "prevalence"
+    )]
+  }
+
+  rbind(
+    sex_df(prev_out$m_M_smokers, prev_out$m_M_popAP, "Male"),
+    sex_df(prev_out$m_F_smokers, prev_out$m_F_popAP, "Female")
+  )
+}
+
+#===============================================================================
+# Format age-sex-year cigarette consumption category probabilities.
+cpd_long_df <- function(df, state_df, year_min, year_max) {
+  out <- df[df$per >= year_min & df$per <= year_max,
+            c("st_fips", "coh", "age", "per", "sex", paste0("p_v1_cpd", 1:6)),
+            drop = FALSE]
+
+  out$st_fips <- sprintf("%02d", as.integer(out$st_fips))
+  out$state_abbr <- state_df$state_abbr[match(out$st_fips, state_df$state_fips)]
+  out$sex <- ifelse(out$sex == 1, "Male", "Female")
+  out$START_YOB <- as.integer(out$coh)
+  out$END_YOB <- out$START_YOB
+  out$AGE <- as.integer(out$age)
+  out$Calendar_Year <- as.integer(out$per)
+
+  out <- out[order(as.integer(out$st_fips), out$sex, out$START_YOB,
+                   out$AGE, out$Calendar_Year), , drop = FALSE]
+  out <- out[, c(
+    "st_fips", "state_abbr", "sex", "START_YOB", "END_YOB", "AGE",
+    "Calendar_Year", paste0("p_v1_cpd", 1:6)
+  )]
+  names(out)[names(out) == "st_fips"] <- "state_fips"
+  names(out)[match(paste0("p_v1_cpd", 1:6), names(out))] <- paste0("CAT", 1:6)
+  out
+}
+
+#===============================================================================
+# Format one population workbook sheet as age-sex-year long data.
+pop_long_df <- function(workbook_path, sheet_name, lookup_df) {
+  raw_df <- suppressMessages(readxl::read_excel(
+    workbook_path,
+    sheet = sheet_name,
+    .name_repair = "minimal"
   ))
+
+  sheet_parts <- strsplit(sheet_name, "-", fixed = TRUE)[[1]]
+  state_abbr <- sheet_parts[1]
+  sex_value <- sheet_parts[2]
+  state_fips <- lookup_df$state_fips[match(state_abbr, lookup_df$state_abbr)][1]
+
+  if (is.na(state_fips) || nrow(raw_df) == 0) return(NULL)
+
+  year_cols <- names(raw_df)[grepl("^[0-9]{4}$", names(raw_df))]
+  if (length(year_cols) == 0) return(NULL)
+
+  age_values <- suppressWarnings(as.integer(raw_df[[1]]))
+  raw_df <- raw_df[!is.na(age_values), , drop = FALSE]
+  age_values <- age_values[!is.na(age_values)]
+  population_wide_df <- raw_df[, year_cols, drop = FALSE]
+
+  if (max(age_values, na.rm = TRUE) == 85L && sum(age_values == 85L) == 1L) {
+    age_85_population <- population_wide_df[age_values == 85L, , drop = FALSE]
+    expanded_85_population <- age_85_population[
+      rep(1L, length(seer_age_85_plus_weights)),
+      ,
+      drop = FALSE
+    ]
+    expanded_85_population[] <- lapply(
+      expanded_85_population,
+      function(values) as.numeric(values) * seer_age_85_plus_weights
+    )
+    population_wide_df <- rbind(
+      population_wide_df[age_values < 85L, , drop = FALSE],
+      expanded_85_population
+    )
+    age_values <- c(
+      age_values[age_values < 85L],
+      85L + seq_along(seer_age_85_plus_weights) - 1L
+    )
+  }
+
+  stacked_values <- stack(population_wide_df)
+  data.frame(
+    state_fips = sprintf("%02d", as.integer(state_fips)),
+    state_abbr = state_abbr,
+    sex = sex_value,
+    AGE = rep(age_values, times = length(year_cols)),
+    Calendar_Year = as.integer(as.character(stacked_values$ind)),
+    population_update = as.numeric(stacked_values$values),
+    stringsAsFactors = FALSE
+  )
+}
+
+#===============================================================================
+# Project population beyond the last supplied year.
+pop_project <- function(df, start_year = 2025L, base_year = 2030L, end_year = 2035L) {
+  id_cols <- c("state_fips", "state_abbr", "sex", "AGE")
+
+  pop_year <- function(year, value_name) {
+    result <- df[
+      df$Calendar_Year == year,
+      c(id_cols, "population_update"),
+      drop = FALSE
+    ]
+    names(result)[names(result) == "population_update"] <- value_name
+    result
+  }
+
+  growth_rates <- merge(
+    pop_year(start_year, "population_start"),
+    pop_year(base_year, "population_base"),
+    by = id_cols,
+    all = FALSE,
+    sort = FALSE
+  )
+  growth_rates$annual_growth_rate <-
+    log(growth_rates$population_base / growth_rates$population_start) /
+    (base_year - start_year)
+
+  projection_years <- seq.int(base_year + 1L, end_year)
+  projected_population <- growth_rates[
+    rep(seq_len(nrow(growth_rates)), each = length(projection_years)),
+    ,
+    drop = FALSE
+  ]
+  projected_population$Calendar_Year <- rep(projection_years, times = nrow(growth_rates))
+  projected_population$population_update <- projected_population$population_base *
+    exp(projected_population$annual_growth_rate *
+          (projected_population$Calendar_Year - base_year))
+  projected_population <- projected_population[, c(id_cols, "Calendar_Year", "population_update")]
+
+  rbind(
+    df[
+      df$Calendar_Year <= base_year,
+      c(id_cols, "Calendar_Year", "population_update"),
+      drop = FALSE
+    ],
+    projected_population
+  )
+}
+
+#===============================================================================
+# Calculate cigarette consumption and tax revenue from smokers, CPD, and tax rate.
+revenue_calc <- function(smokers, average_cpd, tax_rate) {
+  packs_per_smoker <- average_cpd * 365 / 20
+  total_packs <- smokers * packs_per_smoker
+
+  list(
+    packs_per_smoker = packs_per_smoker,
+    total_packs = total_packs,
+    revenue = tax_rate * total_packs
+  )
+}
+
+#===============================================================================
+# Calculate annual state-level factors that align modeled and observed consumption.
+scale_factors <- function(df) {
+  df |>
+    dplyr::group_by(state_abbr, Calendar_Year) |>
+    dplyr::summarise(
+      pop = sum(population, na.rm = TRUE),
+      packs_model = sum(packs_model, na.rm = TRUE),
+      packs_pc_obs = dplyr::first(state_cig_pack_per_capita),
+      packs_obs = dplyr::first(state_cig_sales_pack_in_million) * 1000000,
+      .groups = "drop"
+    ) |>
+    dplyr::mutate(
+      packs_pc_model = ifelse(
+        !is.na(pop) & pop > 0,
+        packs_model / pop,
+        NA_real_
+      ),
+      scale_factor = ifelse(
+        !is.na(packs_pc_model) & packs_pc_model > 0,
+        packs_pc_obs / packs_pc_model,
+        NA_real_
+      )
+    ) |>
+    dplyr::select(
+      state_abbr, Calendar_Year, pop, packs_pc_obs, packs_obs,
+      packs_model, packs_pc_model, scale_factor
+    )
 }

@@ -1,25 +1,9 @@
-## Load, reformat, and save state specific data as inputs for population model
-## contains code for formatting and processing state specific life expectancy,
-## census population data, mortality probabilities, and smoking initiation/cessation probabilities
+source("/Users/wangmengyao/Desktop/Github/tax-modeling/02_code/tax-model/00_config.R", local = TRUE)
+use_packages(c("readxl", "reshape2"))
 
-mainDir <- "/Users/wangmengyao/Desktop/GitHub/tax-modeling/"
-setwd(file.path(mainDir))
+setwd(input_root)
 
-library(reshape2)
-library(readr)
-library(readxl)
-library(cdlTools)
-library(haven)
-library(dplyr)
-library(stringr)
-library(lubridate)
-library(ggplot2)
-library(ggrepel)
-
-v_statefips=c('01','02','04','05','06','08','09',10:13,15:42,44:51,53:56)
-startbc <- 1908   # starting birth cohort 
-endbc <- 2100     # ending birth cohort
-cohyears <- endbc-startbc+1
+dir.create(file.path("data", "state_inputs", "mort_rates"), recursive = TRUE, showWarnings = FALSE)
 
 # Life expectancy data ----------------------------------------------------
 for (fipscodeval in v_statefips){
@@ -49,8 +33,8 @@ for (fipscodeval in v_statefips){
 # Census population data --------------------------------------------------
 
 for (f in v_statefips){
-  df_census_data <- read_excel(paste0("data-raw/sc-est2019-syasex-",f,".xlsx"), range= "H7:AK92", col_types="numeric", col_names=FALSE)
-  df_census_data= cbind(df_census_data, read_excel(paste0("data-raw/sc-est2021-syasex-",f,".xlsx"), range= "E7:J92", col_types="numeric", col_names=FALSE))
+  df_census_data <- readxl::read_excel(paste0("data-raw/sc-est2019-syasex-",f,".xlsx"), range= "H7:AK92", col_types="numeric", col_names=FALSE)
+  df_census_data= cbind(df_census_data, readxl::read_excel(paste0("data-raw/sc-est2021-syasex-",f,".xlsx"), range= "E7:J92", col_types="numeric", col_names=FALSE))
   colnames(df_census_data) = c(rep(c("B", "M", "F"), 12)) # Rename columns for male, female, both
   df_M.census_data=df_census_data[,!colnames(df_census_data) %in% c("B", "F")]
   df_F.census_data=df_census_data[,!colnames(df_census_data) %in% c("B", "M")]
@@ -61,12 +45,12 @@ for (f in v_statefips){
   
   # Census data also groups all adults ages 85+ together
   # so use the SEER standard US population distribution to distribute the 85+ population by single year of age 85-99
-  F.temp=df_F.census_data[86,][rep(1,15),]*c(0.163,0.143,0.126,0.106,0.091,0.077,0.064,0.053,0.042,0.034,0.028,0.021,0.015,0.011,0.026)
+  F.temp=df_F.census_data[86,][rep(1,15),]*seer_age_85_plus_weights
   df_F.census_data=rbind(df_F.census_data[1:85,], F.temp)
   colnames(df_F.census_data) = c(startbc:endbc)
   rownames(df_F.census_data)=c(0:99)
   
-  M.temp=df_M.census_data[86,][rep(1,15),]*c(0.163,0.143,0.126,0.106,0.091,0.077,0.064,0.053,0.042,0.034,0.028,0.021,0.015,0.011,0.026)
+  M.temp=df_M.census_data[86,][rep(1,15),]*seer_age_85_plus_weights
   df_M.census_data=rbind(df_M.census_data[1:85,], M.temp)
   colnames(df_M.census_data) = c(startbc:endbc)
   rownames(df_M.census_data)=c(0:99)
@@ -94,7 +78,6 @@ df_F.mortFS$st_fips = sprintf("%02d", df_F.mortFS$st_fips)
 
 for (f in v_statefips){
   
-  t_init <- Sys.time() # Start timer
   cat(paste0("fips: ", f,", state:",df_M.mortNS$abbr[df_M.mortNS$st_fips==f][1]," "))  
   
   df_M.StatemortNS=subset(df_M.mortNS,st_fips==f)
@@ -229,7 +212,6 @@ for (f in v_statefips){
        m_F.mortNS_AP,m_F.mortCS_AP,m_F.mortFS_AP,a_F.mortYSQ_AP,
        file=paste0("data/state_inputs/mort_rates/mort_",f,".RData"))
   
-  print(Sys.time() - t_init) # End timer
 }
 
 
@@ -296,8 +278,6 @@ df_F.params=read.csv('data-raw/params_022422_2.csv')
 
 for (f in v_statefips){
   
-  t_init <- Sys.time() # Start timer
-  
   df_M.state =subset(df_M.params,st_fips==as.numeric(f))
   df_F.state =subset(df_F.params,st_fips==as.numeric(f))
   
@@ -313,24 +293,24 @@ for (f in v_statefips){
   df_F.statecurrent=df_F.state[c("age","coh","per","curr")]
   df_F.stateformer=df_F.state[c("age","coh","per","form")]
   
-  df_M.initmelt=melt(df_M.stateinit,id=c("age","coh","per"))
-  df_M.cessmelt=melt(df_M.statecess,id=c("age","coh","per"))
-  df_M.nevermelt=melt(df_M.statenever,id=c("age","coh","per"))
-  df_M.currentmelt=melt(df_M.statecurrent,id=c("age","coh","per"))
-  df_M.formermelt=melt(df_M.stateformer,id=c("age","coh","per"))
+  df_M.initmelt=reshape2::melt(df_M.stateinit,id=c("age","coh","per"))
+  df_M.cessmelt=reshape2::melt(df_M.statecess,id=c("age","coh","per"))
+  df_M.nevermelt=reshape2::melt(df_M.statenever,id=c("age","coh","per"))
+  df_M.currentmelt=reshape2::melt(df_M.statecurrent,id=c("age","coh","per"))
+  df_M.formermelt=reshape2::melt(df_M.stateformer,id=c("age","coh","per"))
   
-  df_F.initmelt=melt(df_F.stateinit,id=c("age","coh","per"))
-  df_F.cessmelt=melt(df_F.statecess,id=c("age","coh","per"))
-  df_F.nevermelt=melt(df_F.statenever,id=c("age","coh","per"))
-  df_F.currentmelt=melt(df_F.statecurrent,id=c("age","coh","per"))
-  df_F.formermelt=melt(df_F.stateformer,id=c("age","coh","per"))
+  df_F.initmelt=reshape2::melt(df_F.stateinit,id=c("age","coh","per"))
+  df_F.cessmelt=reshape2::melt(df_F.statecess,id=c("age","coh","per"))
+  df_F.nevermelt=reshape2::melt(df_F.statenever,id=c("age","coh","per"))
+  df_F.currentmelt=reshape2::melt(df_F.statecurrent,id=c("age","coh","per"))
+  df_F.formermelt=reshape2::melt(df_F.stateformer,id=c("age","coh","per"))
   
   # AC 'age-cohort'
-  df_M.initAC=dcast(df_M.initmelt,age~coh)
-  df_M.cessAC=dcast(df_M.cessmelt,age~coh)
-  df_M.neverAC=dcast(df_M.nevermelt,age~coh)
-  df_M.currentAC=dcast(df_M.currentmelt,age~coh)
-  df_M.formerAC=dcast(df_M.formermelt,age~coh)
+  df_M.initAC=reshape2::dcast(df_M.initmelt,age~coh)
+  df_M.cessAC=reshape2::dcast(df_M.cessmelt,age~coh)
+  df_M.neverAC=reshape2::dcast(df_M.nevermelt,age~coh)
+  df_M.currentAC=reshape2::dcast(df_M.currentmelt,age~coh)
+  df_M.formerAC=reshape2::dcast(df_M.formermelt,age~coh)
   
   # convert to matrix
   m_M.initAC = as.matrix(df_M.initAC[-c(1)])
@@ -340,11 +320,11 @@ for (f in v_statefips){
   m_M.formerAC = as.matrix(df_M.formerAC[-c(1)])
   
   # Female to 'age-cohort'
-  df_F.initAC=dcast(df_F.initmelt,age~coh)
-  df_F.cessAC=dcast(df_F.cessmelt,age~coh)
-  df_F.neverAC=dcast(df_F.nevermelt,age~coh)
-  df_F.currentAC=dcast(df_F.currentmelt,age~coh)
-  df_F.formerAC=dcast(df_F.formermelt,age~coh)
+  df_F.initAC=reshape2::dcast(df_F.initmelt,age~coh)
+  df_F.cessAC=reshape2::dcast(df_F.cessmelt,age~coh)
+  df_F.neverAC=reshape2::dcast(df_F.nevermelt,age~coh)
+  df_F.currentAC=reshape2::dcast(df_F.currentmelt,age~coh)
+  df_F.formerAC=reshape2::dcast(df_F.formermelt,age~coh)
   
   # convert to matrix
   m_F.initAC = as.matrix(df_F.initAC[-c(1)])
@@ -356,19 +336,7 @@ for (f in v_statefips){
   save(m_M.initAC, m_M.cessAC, m_M.neverAC, m_M.currentAC, m_M.formerAC,
        m_F.initAC, m_F.cessAC, m_F.neverAC, m_F.currentAC, m_F.formerAC, 
        file=paste0("data/state_inputs/smk_",f,".RData"))
-  print(Sys.time() - t_init) # End timer
 }
 
-## Load data
-
-for (f in v_statefips) {
-  load(paste0("01_input_data/data/state_inputs/le_",f,".RData"))
-  load(paste0("01_input_data/data/state_inputs/pop_",f,".RData"))
-  load(paste0("01_input_data/data/state_inputs/mort_rates/mort_",f,".RData"))
-  load(paste0("01_input_data/data/state_inputs/mort_rates/p.mort_", f, ".RData"))
-  load(paste0("01_input_data/data/state_inputs/smk_",f,".RData"))
-}
-
-
-## Sources:
-# Surveillance Epidemiology and End Results (SEER) Program. Standard Populations - Single Ages. Accessed 2/19/2024, 2024. https://seer.cancer.gov/stdpopulations/stdpop.singleages.html
+# Source: Surveillance Epidemiology and End Results (SEER) Program,
+# Standard Populations - Single Ages. Accessed 2024-02-19.
