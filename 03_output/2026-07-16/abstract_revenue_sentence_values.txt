@@ -1,3 +1,0 @@
-Average absolute percentage deviation improved from 20.5% to 4.1%.
-FY2022 Kentucky: observed revenue = US$329.6 million; modeled revenue after inflation adjustment and scaling = US$313.1 million; difference = -5.0%.
-FY2022 Pennsylvania: observed revenue = US$1062.8 million; modeled revenue after inflation adjustment and scaling = US$997.7 million; difference = -6.1%.
