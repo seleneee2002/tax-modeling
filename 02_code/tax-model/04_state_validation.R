@@ -27,11 +27,24 @@ state_cfg <- data.frame(
 )
 
 base_rev <- readRDS(file.path(model_output_dir, "baseline_revenue.rds"))
+# Older outputs wrap the table in a list and use longer column names.
+if (!is.data.frame(base_rev)) base_rev <- base_rev$baseline_revenue_calculation
+if (!is.data.frame(base_rev)) stop("baseline_revenue.rds does not contain a baseline revenue table.")
+legacy_cols <- c(avg_cpd = "average_cpd_smokers", scale_factor = "tbot_to_model_scaling_factor")
+for (column in names(legacy_cols)) {
+  if (!column %in% names(base_rev)) base_rev[[column]] <- base_rev[[legacy_cols[[column]]]]
+}
+required_cols <- c("state_abbr", "Calendar_Year", "state_price_per_pack_wt_cent", names(legacy_cols))
+missing_cols <- setdiff(required_cols, names(base_rev))
+if (length(missing_cols)) stop("Missing baseline revenue columns: ", paste(missing_cols, collapse = ", "))
 
 state_cfg$init_price <- base_rev$state_price_per_pack_wt_cent[match(
   paste(state_cfg$state_abbr, state_cfg$policy_year - 1L),
   paste(base_rev$state_abbr, base_rev$Calendar_Year)
 )] / 100
+if (any(!is.finite(state_cfg$init_price) | state_cfg$init_price <= 0))
+  stop("Missing or invalid pre-policy price for: ",
+       paste(state_cfg$state_abbr[!is.finite(state_cfg$init_price) | state_cfg$init_price <= 0], collapse = ", "))
 
 join_keys <- c("state_fips", "state_abbr", "sex", "START_YOB", "END_YOB", "AGE", "Calendar_Year")
 
@@ -371,7 +384,8 @@ plot_df <- do.call(rbind, lapply(seq_len(nrow(state_cfg)), function(i) {
     date = fy(df$Calendar_Year),
     observed = df$rev_obs_pc,
     baseline = df$rev_base_pc,
-    policy = df$rev_inf_pc
+    policy = df$rev_inf_pc,
+    tax = df$observed_state_tax_rate_dollar
   )
 }))
 plot_df$state <- factor(plot_df$state, levels = state_cfg$state_name)
@@ -385,34 +399,62 @@ events <- data.frame(
     " per pack"
   )
 )
-events$y <- max(c(plot_df$observed, plot_df$baseline, plot_df$policy), na.rm = TRUE) * 1.05
+events$y <- vapply(seq_len(nrow(state_cfg)), function(i) {
+  df <- plot_df[plot_df$state == state_cfg$state_name[i] & plot_df$date == events$date[i], ]
+  max(df$observed, df$policy, na.rm = TRUE)
+}, numeric(1))
+
+tax_notes <- do.call(rbind, lapply(split(plot_df, plot_df$state), function(df) {
+  df <- df[order(df$date), ]
+  periods <- split(df, cumsum(c(TRUE, diff(df$tax) != 0)))
+  data.frame(state = df$state[1], date = fy(val_min),
+             label = paste(c("Tax/pack:", vapply(periods, function(x)
+               sprintf("%s-%s: $%.2f", fy_lab(min(x$date)), fy_lab(max(x$date)), x$tax[1]),
+               character(1))), collapse = "\n"))
+}))
+
+revenue_max <- ceiling(max(plot_df$observed, plot_df$baseline, plot_df$policy, na.rm = TRUE) * 1.4 / 25) * 25
 
 series_colors <- c(
   "Observed" = "#1f77b4",
-  "Baseline" = "#9467bd",
-  "Policy" = "#d62728"
+  "Model Baseline" = "#9467bd",
+  "Model Policy" = "#D55E00"
 )
 
 validation_plot <- ggplot2::ggplot() +
   ggplot2::geom_vline(data = events, ggplot2::aes(xintercept = as.numeric(date)),
                       linetype = "dashed", color = "gray45", linewidth = 0.6) +
-  ggplot2::geom_line(data = plot_df, ggplot2::aes(date, baseline, color = "Baseline"), linewidth = 1) +
-  ggplot2::geom_line(data = plot_df, ggplot2::aes(date, policy, color = "Policy"), linewidth = 1) +
-  ggplot2::geom_point(data = plot_df, ggplot2::aes(date, observed, color = "Observed"), size = 2.2) +
+  ggplot2::geom_line(data = plot_df, ggplot2::aes(date, baseline, color = "Model Baseline"), linewidth = 0.9) +
+  ggplot2::geom_point(data = plot_df, ggplot2::aes(date, baseline, color = "Model Baseline"), size = 2.2) +
+  ggplot2::geom_line(data = plot_df, ggplot2::aes(date, policy, color = "Model Policy"), linewidth = 0.9) +
+  ggplot2::geom_point(data = plot_df, ggplot2::aes(date, policy, color = "Model Policy"), size = 2.2) +
+  ggplot2::geom_point(data = plot_df, ggplot2::aes(date, observed, color = "Observed"), size = 2.5) +
   ggplot2::geom_text(data = events, ggplot2::aes(date, y, label = label),
-                     hjust = -0.05, vjust = 0, size = 3.4, color = "gray25") +
-  ggplot2::facet_wrap(~ state, ncol = 1, scales = "fixed") +
-  ggplot2::scale_color_manual(breaks = c("Observed", "Baseline", "Policy"), values = series_colors) +
-  ggplot2::scale_x_date(breaks = fy(seq(val_min, val_max, by = 2L)), labels = fy_lab) +
-  ggplot2::scale_y_continuous(labels = num_lab, expand = ggplot2::expansion(mult = c(0.02, 0.12))) +
-  ggplot2::labs(title = "Historical Revenue Validation", x = "Fiscal year end (June 30)",
-                y = "Cigarette tax revenue per capita", color = NULL) +
+                     vjust = -1.2, size = 3.2, color = "gray25") +
+  ggplot2::geom_label(data = tax_notes, ggplot2::aes(date, revenue_max * 0.96, label = label),
+                      hjust = 0, vjust = 1, size = 3, fill = "white", color = "gray25", label.size = 0.3) +
+  ggplot2::facet_wrap(~ state, ncol = 1, scales = "fixed", axes = "all", axis.labels = "all") +
+  ggplot2::scale_color_manual(breaks = names(series_colors), values = series_colors) +
+  ggplot2::scale_x_date(breaks = fy(val_min:val_max), labels = fy_lab,
+                       expand = ggplot2::expansion(mult = c(0.02, 0.03))) +
+  ggplot2::scale_y_continuous(labels = num_lab, limits = c(0, revenue_max),
+                             expand = ggplot2::expansion(mult = c(0, 0.02))) +
+  ggplot2::labs(title = "Historical Revenue Per Capita Validation", x = "Fiscal year end (June 30)",
+                y = "Revenue per capita ($)", color = NULL) +
   ggplot2::theme_minimal(base_size = 12) +
   ggplot2::theme(legend.position = "top", panel.grid.minor = ggplot2::element_blank(),
-                 strip.text = ggplot2::element_text(face = "bold")) +
+                 legend.key.width = grid::unit(1.1, "cm"),
+                 panel.grid.major = ggplot2::element_line(color = "gray91"),
+                 panel.spacing.y = grid::unit(1, "lines"),
+                 axis.text.x = ggplot2::element_text(size = 9),
+                 strip.text = ggplot2::element_text(face = "bold", hjust = 0, size = 13),
+                 plot.title = ggplot2::element_text(size = 17),
+                 plot.margin = ggplot2::margin(12, 16, 12, 12)) +
   ggplot2::guides(color = ggplot2::guide_legend(
-    override.aes = list(shape = c(16, NA, NA), linetype = c("blank", "solid", "solid"))
+    override.aes = list(shape = 16, linetype = c("blank", "solid", "solid"))
   ))
 
 ggplot2::ggsave(file.path(model_validation_dir, "validation_revenue.png"), validation_plot,
-                width = 10, height = 10, dpi = 300, bg = "white")
+                width = 12, height = 12, dpi = 300, bg = "white")
+# ggplot2::ggsave(file.path(model_validation_dir, "validation_revenue.pdf"), validation_plot,
+#                 width = 12, height = 12, bg = "white")

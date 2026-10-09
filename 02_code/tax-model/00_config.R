@@ -30,7 +30,7 @@ seer_age_85_plus_weights <- c(
 )
 
 inflation_adjustment_rate <- 0.97
-consumption_elasticity <- -0.31
+consumption_elasticity <- -0.28
 
 state_lookup <- data.frame(
   state_fips = c(
