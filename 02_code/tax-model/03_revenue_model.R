@@ -32,13 +32,13 @@ year_max <- 2022L
 
 results_path <- file.path(model_output_dir, "baseline_results.rds")
 
-base_results <- readRDS(results_path)
+baseline_results <- readRDS(results_path)
 
-prev_list <- vector("list", length(base_results))
+prev_list <- vector("list", length(baseline_results))
 
-for (i in seq_along(base_results)) {
-  state_fips <- names(base_results)[i]
-  item <- base_results[[i]]
+for (i in seq_along(baseline_results)) {
+  state_fips <- names(baseline_results)[i]
+  item <- baseline_results[[i]]
   
   prev_list[[i]] <- prevalence_long_df(
     item$l_prev_out, "baseline", state_fips, item$df_mort.outputs$abbr[1],

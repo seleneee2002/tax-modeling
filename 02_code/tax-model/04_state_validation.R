@@ -422,39 +422,38 @@ series_colors <- c(
 )
 
 validation_plot <- ggplot2::ggplot() +
-  ggplot2::geom_vline(data = events, ggplot2::aes(xintercept = as.numeric(date)),
+  ggplot2::geom_vline(data = events, ggplot2::aes(xintercept = date),
                       linetype = "dashed", color = "gray45", linewidth = 0.6) +
   ggplot2::geom_line(data = plot_df, ggplot2::aes(date, baseline, color = "Model Baseline"), linewidth = 0.9) +
   ggplot2::geom_point(data = plot_df, ggplot2::aes(date, baseline, color = "Model Baseline"), size = 2.2) +
   ggplot2::geom_line(data = plot_df, ggplot2::aes(date, policy, color = "Model Policy"), linewidth = 0.9) +
   ggplot2::geom_point(data = plot_df, ggplot2::aes(date, policy, color = "Model Policy"), size = 2.2) +
   ggplot2::geom_point(data = plot_df, ggplot2::aes(date, observed, color = "Observed"), size = 2.5) +
-  ggplot2::geom_text(data = events, ggplot2::aes(date, y, label = label),
-                     vjust = -1.2, size = 3.2, color = "gray25") +
+  ggplot2::geom_text(data = events, ggplot2::aes(date - 90, y, label = label),
+                     hjust = 1, vjust = -1.2, size = 3.2, color = "gray25") +
   ggplot2::geom_label(data = tax_notes, ggplot2::aes(date, revenue_max * 0.96, label = label),
-                      hjust = 0, vjust = 1, size = 3, fill = "white", color = "gray25", label.size = 0.3) +
+                      hjust = 0, vjust = 1, size = 3, fill = "white", color = "gray25", linewidth = 0.3) +
   ggplot2::facet_wrap(~ state, ncol = 1, scales = "fixed", axes = "all", axis.labels = "all") +
   ggplot2::scale_color_manual(breaks = names(series_colors), values = series_colors) +
   ggplot2::scale_x_date(breaks = fy(val_min:val_max), labels = fy_lab,
                        expand = ggplot2::expansion(mult = c(0.02, 0.03))) +
   ggplot2::scale_y_continuous(labels = num_lab, limits = c(0, revenue_max),
                              expand = ggplot2::expansion(mult = c(0, 0.02))) +
-  ggplot2::labs(title = "Historical Revenue Per Capita Validation", x = "Fiscal year end (June 30)",
+  ggplot2::labs(x = "Fiscal year end (June 30)",
                 y = "Revenue per capita ($)", color = NULL) +
   ggplot2::theme_minimal(base_size = 12) +
   ggplot2::theme(legend.position = "top", panel.grid.minor = ggplot2::element_blank(),
-                 legend.key.width = grid::unit(1.1, "cm"),
+                 legend.key.width = grid::unit(0.85, "cm"),
                  panel.grid.major = ggplot2::element_line(color = "gray91"),
                  panel.spacing.y = grid::unit(1, "lines"),
                  axis.text.x = ggplot2::element_text(size = 9),
-                 strip.text = ggplot2::element_text(face = "bold", hjust = 0, size = 13),
-                 plot.title = ggplot2::element_text(size = 17),
+                 strip.text = ggplot2::element_text(face = "bold", hjust = 0, size = 16),
                  plot.margin = ggplot2::margin(12, 16, 12, 12)) +
   ggplot2::guides(color = ggplot2::guide_legend(
     override.aes = list(shape = 16, linetype = c("blank", "solid", "solid"))
   ))
 
 ggplot2::ggsave(file.path(model_validation_dir, "validation_revenue.png"), validation_plot,
-                width = 12, height = 12, dpi = 300, bg = "white")
+                width = 8.5, height = 11, dpi = 300, bg = "white")
 # ggplot2::ggsave(file.path(model_validation_dir, "validation_revenue.pdf"), validation_plot,
-#                 width = 12, height = 12, bg = "white")
+#                 width = 8.5, height = 11, bg = "white")

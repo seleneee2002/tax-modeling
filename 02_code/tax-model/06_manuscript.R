@@ -1,7 +1,7 @@
 # Build manuscript tables and figures from the projection output.
 
 source("/Users/wangmengyao/Desktop/Github/tax-modeling/02_code/tax-model/00_config.R",local = TRUE)
-use_packages(c("ggplot2", "gridExtra"))
+use_packages(c("ggplot2", "gridExtra", "ggrepel", "gtable", "scales"))
 
 table_years <- 2027:2032
 
@@ -97,19 +97,19 @@ pc_col <- "cumulative revenue per capita (FY28-FY32)"
 total_revenue_raw <- proj_table("state_revenue_model_scaled", total_col)
 total_revenue <- format_table(total_revenue_raw, total_col, 0)
 utils::write.csv(total_revenue,
-                 file.path(manuscript_output_dir, "projection_revenue_table.csv"),
+                 file.path(manuscript_output_dir, "revenue_table.csv"),
                  row.names = FALSE)
 
 concise_revenue_table_raw <- gain_only(total_revenue_raw)
 concise_revenue_table <- gain_only(total_revenue)
 utils::write.csv(concise_revenue_table,
-                 file.path(manuscript_output_dir, "projection_revenue_gain.csv"),
+                 file.path(manuscript_output_dir, "revenue_gain.csv"),
                  row.names = FALSE)
 
 per_capita_revenue_table_raw <- proj_table("scaled_revenue_per_capita", pc_col)
 per_capita_revenue_table <- format_table(per_capita_revenue_table_raw, pc_col, 2)
 utils::write.csv(per_capita_revenue_table,
-                 file.path(manuscript_output_dir, "projection_revenue_table_per_capita.csv"),
+                 file.path(manuscript_output_dir, "revenue_table_per_capita.csv"),
                  row.names = FALSE)
 
 #===============================================================================
@@ -131,19 +131,25 @@ gain_plot <- function(df, title, x_label, x_labels, state_order) {
       values = c("$1 tax increase" = "#0072B2", "$2 tax increase" = "#D55E00")
     ) +
     ggplot2::scale_shape_manual(values = c("Index = 1" = 16, "Index = 0" = 17)) +
-    ggplot2::scale_x_continuous(labels = x_labels) +
+    ggplot2::scale_x_continuous(labels = x_labels,
+                               breaks = scales::breaks_pretty(n = 8),
+                               minor_breaks = scales::breaks_pretty(n = 16)) +
     ggplot2::labs(
       title = title, x = x_label, y = NULL,
       color = "Tax scenario", shape = "Inflation index"
     ) +
-    ggplot2::theme_minimal(base_size = 11) +
+    ggplot2::theme_minimal(base_size = 14) +
     ggplot2::theme(
       legend.position = "top",
       legend.box = "vertical",
-      panel.grid.minor = ggplot2::element_blank(),
-      axis.text = ggplot2::element_text(size = 10),
-      axis.title.x = ggplot2::element_text(size = 12),
-      plot.title = ggplot2::element_text(face = "bold")
+      panel.grid.major.x = ggplot2::element_line(color = "gray80", linewidth = 0.4),
+      panel.grid.minor.x = ggplot2::element_line(color = "gray90", linewidth = 0.25),
+      panel.grid.major.y = ggplot2::element_line(color = "gray93", linewidth = 0.25),
+      panel.grid.minor.y = ggplot2::element_blank(),
+      axis.text = ggplot2::element_text(size = 12),
+      axis.title.x = ggplot2::element_text(size = 14),
+      legend.text = ggplot2::element_text(size = 12),
+      plot.title = ggplot2::element_text(size = 16, face = "bold")
     )
 }
 
@@ -186,14 +192,12 @@ combined_plot <- gridExtra::arrangeGrob(
   ncol = 2,
   top = grid::textGrob(
     "Projected Cumulative Cigarette Tax Revenue Gain by State",
-    gp = grid::gpar(fontsize = 16, fontface = "bold")
+    gp = grid::gpar(fontsize = 18, fontface = "bold")
   )
 )
 
-ggplot2::ggsave(
-  file.path(manuscript_output_dir, "projection_revenue_gain_ranking.png"),
-  combined_plot, width = 13, height = 15, dpi = 300, bg = "white"
-)
+ggplot2::ggsave(file.path(manuscript_output_dir, "revenue_gain_ranking.png"),
+                combined_plot, width = 15, height = 17, dpi = 300, bg = "white")
 
 #===============================================================================
 # Supplementary
@@ -277,7 +281,11 @@ scatter_plots <- lapply(names(measures), function(measure)
   ) +
     ggplot2::geom_smooth(method = "lm", formula = y ~ x, se = TRUE, linewidth = 0.8,
                          color = "#4C78A8", fill = "#9ECAE9") +
-    ggplot2::geom_text(ggplot2::aes(label = state_abbr), size = 2.5, color = "gray25") +
+    ggrepel::geom_text_repel(ggplot2::aes(label = state_abbr), size = 3, color = "gray25",
+                             seed = 42, max.overlaps = Inf, max.iter = 20000, max.time = 2,
+                             box.padding = 0.25, point.padding = 0, force_pull = 2,
+                             min.segment.length = 1, segment.color = "gray65",
+                             segment.size = 0.2) +
     ggplot2::labs(x = measures[[measure]], y = "Cumulative revenue gain per capita ($)") +
     ggplot2::theme_minimal(base_size = 11) +
     ggplot2::theme(panel.grid.minor = ggplot2::element_blank())
@@ -297,7 +305,7 @@ ggplot2::ggsave(file.path(manuscript_output_dir, "state_level_revenue_scatter.pn
 
 # --- Four-panel state mock-up -------------------------------------------
 
-panel_states <- "PA" # Use state_lookup$state_abbr for one page per state.
+panel_states <- state_lookup$state_abbr # Use "PA" for a single-state mock-up.
 panel_table_years <- 2027:2032
 tbot <- utils::read.csv(file.path(input_root, "data_for_tcp_revenue.csv"))
 panel_labels <- c("Baseline", "$1: Index = 1", "$1: Index = 0",
@@ -315,21 +323,22 @@ state_panel <- function(state) {
   historical <- tbot[tbot$state == state & tbot$year %in% df$Calendar_Year, ]
   last_observed <- max(historical$year)
   years <- range(df$Calendar_Year)
+  year_breaks <- sort(unique(c(seq(years[1], years[2], 5), policy_year, years[2])))
 
-  panel_plot <- function(data, value, title, y_label, divisor = 1, x_max = years[2]) {
+  panel_plot <- function(data, value, title, y_label, divisor = 1) {
     data <- data[data$scenario == "baseline" | data$Calendar_Year >= policy_year - 1L, ]
     ggplot2::ggplot(data, ggplot2::aes(Calendar_Year, .data[[value]] / divisor,
                                      color = label, linetype = label)) +
       ggplot2::annotate("rect", xmin = last_observed + 0.5, xmax = Inf,
-                        ymin = -Inf, ymax = Inf, fill = "gray95") +
+                        ymin = -Inf, ymax = Inf, fill = "gray50", alpha = 0.08) +
       ggplot2::geom_vline(xintercept = policy_year, color = "gray55", linetype = "dotted") +
       ggplot2::geom_line(linewidth = 0.7) +
       ggplot2::scale_color_manual(values = panel_colors, drop = FALSE) +
       ggplot2::scale_linetype_manual(values = panel_lines, drop = FALSE) +
-      ggplot2::scale_x_continuous(breaks = sort(unique(c(seq(years[1], years[2], 5),
-                                                        policy_year, max(panel_table_years))))) +
+      ggplot2::scale_x_continuous(breaks = year_breaks, minor_breaks = seq(years[1], years[2]),
+                                 expand = ggplot2::expansion(mult = 0)) +
       ggplot2::scale_y_continuous(labels = function(x) format(x, big.mark = ",", trim = TRUE)) +
-      ggplot2::coord_cartesian(xlim = c(years[1], x_max)) +
+      ggplot2::coord_cartesian(xlim = years, clip = "off") +
       ggplot2::labs(title = title, x = "Fiscal year", y = y_label, color = NULL, linetype = NULL) +
       ggplot2::theme_bw(base_size = 11) +
       ggplot2::theme(legend.position = "none", panel.border = ggplot2::element_rect(color = "gray70"),
@@ -337,7 +346,7 @@ state_panel <- function(state) {
                       panel.grid.minor = ggplot2::element_line(color = "gray95", linewidth = 0.2),
                       axis.text.x = ggplot2::element_text(angle = 0, hjust = 0.5),
                       plot.title = ggplot2::element_text(size = 12),
-                      plot.margin = ggplot2::margin(10, 12, 6, 10))
+                      plot.margin = ggplot2::margin(10, 78, 8, 12))
   }
 
   # Keep the policy jump vertical; connect subsequent annual values so dashes stay legible.
@@ -347,14 +356,11 @@ state_panel <- function(state) {
   pre_tax <- df$state_tax_rate_dollar_proj[df$scenario == "baseline" &
                                           df$Calendar_Year == policy_year][1]
   endpoints <- df[df$Calendar_Year == years[2], ]
-  endpoints$number <- ifelse(endpoints$scenario == "model_inf",
-                             sprintf("$%.4f", endpoints$state_tax_rate_dollar_proj),
-                             sprintf("$%.2f", endpoints$state_tax_rate_dollar_proj))
+  endpoints$number <- sprintf("$%.1f", endpoints$state_tax_rate_dollar_proj)
   historical <- historical[order(historical$year), ]
   tax_changes <- historical[c(TRUE, diff(historical$state_tax_rate_cent) != 0), ]
   tax_plot <- panel_plot(tax_df, "state_tax_rate_dollar_proj",
-                         "B. State cigarette excise tax per pack", "Tax per pack ($)",
-                         x_max = years[2] + 3) +
+                         "A. State cigarette excise tax per pack", "Tax per pack ($)") +
     ggplot2::geom_point(data = tax_df[tax_df$scenario == "model_inf", ],
                         size = 1, show.legend = FALSE) +
     ggplot2::geom_step(data = historical, ggplot2::aes(year, state_tax_rate_cent / 100),
@@ -363,13 +369,13 @@ state_panel <- function(state) {
                         inherit.aes = FALSE, color = "gray25", size = 1.3) +
     ggplot2::geom_text(data = tax_changes,
                        ggplot2::aes(year, state_tax_rate_cent / 100,
-                                     label = sprintf("$%.2f", state_tax_rate_cent / 100)),
+                                     label = sprintf("$%.1f", state_tax_rate_cent / 100)),
                        inherit.aes = FALSE, vjust = -0.9, hjust = 0, size = 3) +
     ggplot2::geom_segment(data = onset, ggplot2::aes(x = Calendar_Year, xend = Calendar_Year,
                                                     y = pre_tax, yend = state_tax_rate_dollar_proj,
                                                     color = label), inherit.aes = FALSE, linewidth = 0.7) +
     ggplot2::geom_text(data = onset, ggplot2::aes(Calendar_Year - 0.4, state_tax_rate_dollar_proj,
-                                                 label = sprintf("$%.2f", state_tax_rate_dollar_proj),
+                                                 label = sprintf("$%.1f", state_tax_rate_dollar_proj),
                                                  color = label),
                        inherit.aes = FALSE, hjust = 1, vjust = -0.5, size = 3) +
     ggplot2::geom_text(data = endpoints, ggplot2::aes(Calendar_Year + 0.4, state_tax_rate_dollar_proj,
@@ -381,9 +387,9 @@ state_panel <- function(state) {
     ggplot2::annotate("text", x = policy_year, y = max(onset$state_tax_rate_dollar_proj) + 0.45,
                       label = paste("Policy:", policy_year), size = 3)
   consumption_plot <- panel_plot(df, "cigarette_packs_smoked_total",
-                                  "C. Total cigarette consumption", "Consumption (million packs/year)", 1e6)
+                                  "B. Total cigarette consumption", "Consumption (million packs/year)", 1e6)
   revenue_plot <- panel_plot(df, "state_revenue_model_scaled",
-                              "D. Aggregate cigarette tax revenue", "Annual state revenue ($ million)", 1e6)
+                              "C. Aggregate cigarette tax revenue", "Annual state revenue ($ million)", 1e6)
 
   key_consumption <- df[df$scenario == "baseline" &
                          df$Calendar_Year %in% c(policy_year - 1L, policy_year), ]
@@ -402,22 +408,24 @@ state_panel <- function(state) {
     rows <- gains[gains$label == label, ]
     rows <- rows[match(panel_table_years, rows$Calendar_Year), ]
     values <- rbind(rows$gain / 1e6, rows$gain / rows$population)
-    values <- matrix(sprintf("$%.2f", values), nrow = 2)
+    values <- matrix(sprintf("$%.1f", values), nrow = 2)
     cbind(Scenario = c(label, ""), Measure = c("Total ($M)", "Per capita ($)"), values)
   })
   gain_table <- do.call(rbind, gain_rows)
   colnames(gain_table) <- c("Scenario", "Measure", paste0("FY", panel_table_years))
   table_grob <- gridExtra::tableGrob(gain_table, rows = NULL, theme = gridExtra::ttheme_minimal(
-      base_size = 9, padding = grid::unit(c(4, 2), "mm"),
+      base_size = 11, padding = grid::unit(c(6, 1.5), "mm"),
       core = list(bg_params = list(fill = "white", col = NA))
     ))
+  table_grob$widths <- grid::unit(c(1.25, 1.15, rep(0.7, length(panel_table_years))), "in")
+  table_grob$heights <- grid::unit(rep(0.32, nrow(table_grob)), "in")
   for (row in c(1L, nrow(table_grob)))
     table_grob <- gtable::gtable_add_grob(table_grob,
       grid::segmentsGrob(x0 = 0, x1 = 1, y0 = 0, y1 = 0,
                          gp = grid::gpar(col = "gray40")),
       t = row, l = 1, r = ncol(table_grob))
   table_plot <- gridExtra::arrangeGrob(
-    grid::textGrob("A. Annual revenue gain vs. baseline", x = 0.02, hjust = 0,
+    grid::textGrob("D. Annual revenue gain vs. baseline", x = 0.02, hjust = 0,
                    gp = grid::gpar(fontsize = 12)), table_grob,
     ncol = 1, heights = c(0.12, 0.88)
   )
@@ -434,17 +442,73 @@ state_panel <- function(state) {
     layout_matrix = rbind(c(1, 2, 3), c(1, 4, 5)),
     widths = grid::unit(c(3, 4.5, 4.5), "cm"), heights = grid::unit(c(0.6, 0.6), "cm")
   )
-  gridExtra::arrangeGrob(
-    gridExtra::arrangeGrob(table_plot, tax_plot, consumption_plot, revenue_plot, ncol = 2),
-    legend, ncol = 1, heights = c(1, 0.09),
+  plots <- lapply(list(tax_plot, consumption_plot, revenue_plot), ggplot2::ggplotGrob)
+  shared_widths <- do.call(grid::unit.pmax, lapply(plots, function(plot) plot$widths))
+  plots <- lapply(plots, function(plot) {
+    plot$widths <- shared_widths
+    plot
+  })
+  figure <- gridExtra::arrangeGrob(
+    grobs = c(list(legend), plots, list(table_plot)),
+    ncol = 1, heights = c(0.55, 2.8, 2.8, 2.8, 3.2),
     top = grid::textGrob(paste0(state_lookup$state_name[match(state, state_lookup$state_abbr)],
                                " (", state, "): Cigarette Tax Model Outcomes"),
                          gp = grid::gpar(fontsize = 15, fontface = "bold"))
   )
+  gtable::gtable_add_padding(figure, grid::unit(c(18, 18, 22, 18), "pt"))
 }
 
 panel_figure <- gridExtra::marrangeGrob(lapply(panel_states, state_panel),
                                       nrow = 1, ncol = 1, top = NULL)
 ggplot2::ggsave(file.path(manuscript_output_dir, "supp_state_panels.pdf"),
                 panel_figure,
-                width = 14, height = 10, bg = "white")
+                width = 9, height = 13.5, bg = "white")
+
+# --- Baseline consumption vs. population: one paired page per state ------
+
+consumption_population_plot <- function(state) {
+  df <- unique(annual_summary_df[annual_summary_df$state_abbr == state &
+                                  annual_summary_df$scenario == "baseline" &
+                                  annual_summary_df$Calendar_Year <= max(panel_table_years),
+                                c("Calendar_Year", "cigarette_packs_smoked_total", "population")])
+  measures <- c("Consumption (million packs/year)", "Population (million people)")
+  data <- rbind(
+    data.frame(year = df$Calendar_Year, value = df$cigarette_packs_smoked_total / 1e6, measure = measures[1]),
+    data.frame(year = df$Calendar_Year, value = df$population / 1e6, measure = measures[2])
+  )
+  data$measure <- factor(data$measure, levels = measures)
+  key <- data[data$year %in% c(policy_year - 1L, policy_year), ]
+  key$number <- ifelse(key$measure == measures[1], sprintf("%.1f", key$value), sprintf("%.3f", key$value))
+  last_observed <- max(tbot$year[tbot$state == state])
+
+  ggplot2::ggplot(data, ggplot2::aes(year, value)) +
+    ggplot2::annotate("rect", xmin = last_observed + 0.5, xmax = Inf,
+                      ymin = -Inf, ymax = Inf, fill = "gray50", alpha = 0.08) +
+    ggplot2::geom_vline(xintercept = policy_year, linetype = "dotted", color = "gray55") +
+    ggplot2::geom_line(linewidth = 0.8, color = "gray25") +
+    ggplot2::geom_point(size = 1.3, color = "gray25") +
+    ggplot2::geom_point(data = key, size = 2.2, color = "#0072B2") +
+    ggplot2::geom_text(data = key, ggplot2::aes(label = number,
+                                               hjust = ifelse(year < policy_year, 1.15, -0.15)),
+                       vjust = -0.8, size = 3.8, color = "#0072B2") +
+    ggplot2::facet_wrap(~ measure, ncol = 1, scales = "free_y", axes = "all", axis.labels = "all") +
+    ggplot2::scale_x_continuous(breaks = sort(unique(c(seq(min(data$year), max(data$year), 5),
+                                                      policy_year, max(data$year)))),
+                               minor_breaks = seq(min(data$year), max(data$year))) +
+    ggplot2::scale_y_continuous(labels = scales::label_number(),
+                               expand = ggplot2::expansion(mult = c(0.08, 0.18))) +
+    ggplot2::labs(title = paste0(abbr_name(state), " (", state, "): Baseline"), x = "Fiscal year", y = NULL) +
+    ggplot2::theme_bw(base_size = 13) +
+    ggplot2::theme(strip.background = ggplot2::element_blank(),
+                   strip.text = ggplot2::element_text(hjust = 0, face = "bold"),
+                   panel.spacing.y = grid::unit(1, "lines"),
+                   panel.grid.major = ggplot2::element_line(color = "gray90", linewidth = 0.3),
+                   panel.grid.minor = ggplot2::element_line(color = "gray95", linewidth = 0.2),
+                   plot.margin = ggplot2::margin(12, 18, 12, 12))
+}
+
+consumption_population_figure <- gridExtra::marrangeGrob(
+  lapply(panel_states, consumption_population_plot), nrow = 1, ncol = 1, top = NULL
+)
+ggplot2::ggsave(file.path(manuscript_output_dir, "baseline_consumption_population.pdf"),
+                consumption_population_figure, width = 8.5, height = 9.5, bg = "white")

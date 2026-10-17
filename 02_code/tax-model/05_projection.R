@@ -268,15 +268,13 @@ all_projection <- list(
     consumption_elasticity = consumption_elasticity,
     inflation_adjustment_rate = inflation_adjustment_rate,
     policy_baseline_price_year = price_year,
-    policy_baseline_price_source = "FY2025 state_price_per_pack_wt_cent from data_for_tcp_revenue.csv",
     policy_baseline_tax_year = price_year,
-    policy_baseline_tax_source = "FY2025 state_tax_rate_cent from data_for_tcp_revenue.csv",
     observed_price_tax_years = year_min:price_year,
-    future_price_tax_assumption = paste(
-      "Carry forward FY2025 observed price and state excise tax from FY2026 onward,",
-      "then add the scenario-specific tax increase beginning in the policy year."
-    ),
-    cpd_future_assumption = "Carry forward the FY2022 age-sex CPD profile for future projection years.",
+    # future_price_tax_assumption = paste(
+    #   "Carry forward FY2025 observed price and state excise tax from FY2026 onward,",
+    #   "then add the scenario-specific tax increase beginning in the policy year."
+    # ),
+    # cpd_future_assumption = "Carry forward the FY2022 age-sex CPD profile for future projection years.",
     price_tax_path = normalizePath(price_file, winslash = "/", mustWork = TRUE),
     baseline_revenue_path = normalizePath(file.path(model_output_dir, "baseline_revenue.rds"),
                                           winslash = "/", mustWork = TRUE),
