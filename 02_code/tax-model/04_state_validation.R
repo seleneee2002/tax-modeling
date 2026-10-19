@@ -30,6 +30,7 @@ base_rev <- readRDS(file.path(model_output_dir, "baseline_revenue.rds"))
 # Older outputs wrap the table in a list and use longer column names.
 if (!is.data.frame(base_rev)) base_rev <- base_rev$baseline_revenue_calculation
 if (!is.data.frame(base_rev)) stop("baseline_revenue.rds does not contain a baseline revenue table.")
+base_rev <- base_rev[base_rev$Calendar_Year >= val_min & base_rev$Calendar_Year <= val_max, , drop = FALSE]
 legacy_cols <- c(avg_cpd = "average_cpd_smokers", scale_factor = "tbot_to_model_scaling_factor")
 for (column in names(legacy_cols)) {
   if (!column %in% names(base_rev)) base_rev[[column]] <- base_rev[[legacy_cols[[column]]]]

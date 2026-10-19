@@ -2,7 +2,7 @@
 
 source("/Users/wangmengyao/Desktop/Github/tax-modeling/02_code/tax-model/00_config.R", local = TRUE)
 source("/Users/wangmengyao/Desktop/Github/tax-modeling/02_code/tax-model/02_model_functions.R", local = TRUE)
-use_packages(c("dplyr", "readxl", "openxlsx"))
+use_packages(c("dplyr", "readxl", "openxlsx", "data.table"))
 
 
 # Run the baseline smoking model for all states and DC.
@@ -28,7 +28,7 @@ message("Saved baseline model results to: ", baseline_output_path)
 
 dir.create(data_output_dir, recursive = TRUE, showWarnings = FALSE)
 year_min <- 2010L
-year_max <- 2022L
+year_max <- 2025L # Last observed year used to calibrate future revenue.
 
 results_path <- file.path(model_output_dir, "baseline_results.rds")
 
@@ -121,7 +121,9 @@ base_lookup$state_abbr <- as.character(base_lookup$state_abbr)
 
 # CPD inputs.
 cpd_df <- cpd_long_df(
-  utils::read.csv(file.path(input_root, "SHG_08252026.csv"), stringsAsFactors = FALSE),
+  data.table::fread(file.path(input_root, "SHG_08252026.csv"),
+                    select = c("st_fips", "coh", "age", "per", "sex", paste0("p_v1_cpd", 1:6)),
+                    data.table = FALSE),
   base_lookup,
   year_min,
   year_max
@@ -173,6 +175,8 @@ base_rev$rev_obs <- ifelse(total_packs > 0,
 
 # Scale modeled consumption to observed annual sales.
 scales <- scale_factors(base_rev)
+if (any(!is.finite(scales$scale_factor) | scales$scale_factor <= 0))
+  stop("Missing or invalid annual scaling factors; check observed sales and model inputs.")
 base_rev <- dplyr::left_join(
   base_rev,
   dplyr::select(scales, state_abbr, Calendar_Year, scale_factor),

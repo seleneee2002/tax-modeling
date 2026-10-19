@@ -3,12 +3,14 @@
 source("/Users/wangmengyao/Desktop/Github/tax-modeling/02_code/tax-model/00_config.R", local = TRUE)
 source(file.path(repo_root, "02_code", "tax-model", "02_model_functions.R"), local = TRUE)
 
-use_packages("openxlsx")
+use_packages(c("openxlsx", "data.table"))
 
 price_file <- file.path(input_root, "data_for_tcp_revenue.csv")
+cpd_file <- file.path(input_root, "SHG_08252026.csv")
 population_path <- file.path(data_output_dir, "population.xlsx")
 projection_output_path <- file.path(model_output_dir, "all_projection.rds")
 price_year <- 2025L
+scaling_year <- 2025L
 year_min <- 2010L
 year_max <- 2035L
 policy_year_default <- 2028L
@@ -41,6 +43,29 @@ pop_updates <- pop_updates[
 ]
 
 states <- state_lookup[, c("state_abbr", "state_fips")]
+
+# Require the updated calibration instead of silently carrying forward FY2022.
+reference_scales <- scales[scales$Calendar_Year == scaling_year, , drop = FALSE]
+if (anyDuplicated(scales[c("state_abbr", "Calendar_Year")]) ||
+    !setequal(reference_scales$state_abbr, states$state_abbr) ||
+    any(!is.finite(reference_scales$scale_factor) | reference_scales$scale_factor <= 0))
+  stop("Run 03_revenue_model.R first to prepare valid FY2025 scaling factors for all states.")
+
+# Use each year's SHG baseline CPD, including the future model trajectory.
+cpd_df <- cpd_long_df(
+  data.table::fread(cpd_file,
+                    select = c("st_fips", "coh", "age", "per", "sex", paste0("p_v1_cpd", 1:6)),
+                    data.table = FALSE),
+  states, year_min, year_max
+)
+cpd_df <- cpd_df[!is.na(cpd_df$state_abbr), , drop = FALSE]
+cpd_df$avg_cpd <- as.numeric(as.matrix(cpd_df[, paste0("CAT", 1:6)]) %*% c(2.5, 10, 20, 30, 40, 50))
+cpd_df$avg_cpd[is.na(cpd_df$avg_cpd) & cpd_df$AGE < 8L] <- 0
+cpd_df <- cpd_df[, c("state_abbr", "sex", "AGE", "Calendar_Year", "avg_cpd")]
+if (anyDuplicated(cpd_df[c("state_abbr", "sex", "AGE", "Calendar_Year")]) ||
+    nrow(cpd_df) != nrow(states) * 200L * length(year_min:year_max) ||
+    any(!is.finite(cpd_df$avg_cpd) | cpd_df$avg_cpd < 0))
+  stop("Missing, duplicated, or invalid annual age-sex CPD inputs.")
 
 # --- Projection helpers ------------------------------------------------
 
@@ -127,19 +152,12 @@ project_state <- function(state_abbr, state_fips, tax) {
   init_price <- price_df$state_price_per_pack_wt_cent[
     price_df$state_abbr == state_abbr & price_df$Calendar_Year == price_year][1] / 100
   
-  state_base <- base_rev[base_rev$state_abbr == state_abbr, , drop = FALSE]
+  state_cpd <- cpd_df[cpd_df$state_abbr == state_abbr, , drop = FALSE]
   state_price_tax <- price_df[
     price_df$state_abbr == state_abbr &
       price_df$Calendar_Year >= year_min & price_df$Calendar_Year <= price_year, , drop = FALSE]
   
-  state_scales <- scales[scales$state_abbr == state_abbr & !is.na(scales$scale_factor), ]
-  latest_scaling_year <- max(state_scales$Calendar_Year, na.rm = TRUE)
-  latest_scaling_factor <- state_scales$scale_factor[state_scales$Calendar_Year == latest_scaling_year][1]
-  
-  latest_cpd_year <- max(state_base$Calendar_Year[!is.na(state_base$avg_cpd)], na.rm = TRUE)
-  latest_cpd <- state_base[state_base$Calendar_Year == latest_cpd_year,
-                           c("sex", "AGE", "avg_cpd"), drop = FALSE]
-  latest_cpd <- latest_cpd[!duplicated(latest_cpd[c("sex", "AGE")]), ]
+  state_scales <- scales[scales$state_abbr == state_abbr, , drop = FALSE]
   
   message(sprintf("Running projection for %s (%s): +$%.2f in %d through %d",
                   state_abbr, state_fips, tax, policy_year_default, year_max))
@@ -184,15 +202,11 @@ project_state <- function(state_abbr, state_fips, tax) {
   keys <- c("sex", "AGE", "Calendar_Year")
   rev_input <- merge(
     unique(prev$baseline[, keys]),
-    state_base[, c(keys, "avg_cpd")],
+    state_cpd[, c(keys, "avg_cpd")],
     by = keys, all.x = TRUE, sort = FALSE
   )
   
-  names(latest_cpd)[3] <- "latest_cpd"
-  rev_input <- merge(rev_input, latest_cpd, by = c("sex", "AGE"), all.x = TRUE, sort = FALSE)
-  rev_input$avg_cpd <- ifelse(is.na(rev_input$avg_cpd), rev_input$latest_cpd, rev_input$avg_cpd)
-  rev_input$avg_cpd[is.na(rev_input$avg_cpd)] <- 0
-  rev_input$latest_cpd <- NULL
+  if (any(!is.finite(rev_input$avg_cpd))) stop("Missing annual CPD inputs for ", state_abbr)
   
   price_match <- match(rev_input$Calendar_Year, state_price_tax$Calendar_Year)
   rev_input$base_price <- state_price_tax$state_price_per_pack_wt_cent[price_match] / 100
@@ -201,7 +215,11 @@ project_state <- function(state_abbr, state_fips, tax) {
   rev_input$baseline_tax_rate_dollar <- state_price_tax$state_tax_rate_cent[price_match] / 100
   reference_tax <- state_price_tax$state_tax_rate_cent[state_price_tax$Calendar_Year == price_year][1] / 100
   rev_input$baseline_tax_rate_dollar[is.na(rev_input$baseline_tax_rate_dollar)] <- reference_tax
-  rev_input$latest_scaling_factor <- latest_scaling_factor
+  # Annual historical calibration; hold FY2025 fixed from FY2026 onward.
+  scale_match <- match(pmin(rev_input$Calendar_Year, scaling_year), state_scales$Calendar_Year)
+  rev_input$latest_scaling_factor <- state_scales$scale_factor[scale_match]
+  if (any(!is.finite(rev_input$latest_scaling_factor) | rev_input$latest_scaling_factor <= 0))
+    stop("Missing or invalid annual scaling factors for ", state_abbr)
   
   annual_summary <- do.call(rbind, lapply(names(prev), function(scenario)
     proj_summary(prev[[scenario]], rev_input, scenario, tax,
@@ -270,11 +288,15 @@ all_projection <- list(
     policy_baseline_price_year = price_year,
     policy_baseline_tax_year = price_year,
     observed_price_tax_years = year_min:price_year,
+    cpd_model_years = year_min:year_max,
+    cpd_future_assumption = "Use annual SHG age-sex baseline CPD before the scenario-specific tax adjustment.",
+    scaling_reference_year = scaling_year,
+    scaling_future_assumption = "Use annual factors through FY2025; hold each state's FY2025 factor fixed thereafter.",
     # future_price_tax_assumption = paste(
     #   "Carry forward FY2025 observed price and state excise tax from FY2026 onward,",
     #   "then add the scenario-specific tax increase beginning in the policy year."
     # ),
-    # cpd_future_assumption = "Carry forward the FY2022 age-sex CPD profile for future projection years.",
+    cpd_path = normalizePath(cpd_file, winslash = "/", mustWork = TRUE),
     price_tax_path = normalizePath(price_file, winslash = "/", mustWork = TRUE),
     baseline_revenue_path = normalizePath(file.path(model_output_dir, "baseline_revenue.rds"),
                                           winslash = "/", mustWork = TRUE),
