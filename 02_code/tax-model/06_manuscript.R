@@ -9,6 +9,7 @@ projection_path <- file.path(model_output_dir, "all_projection.rds")
 all_projection <- readRDS(projection_path)
 annual_summary_df <- all_projection$annual_summary
 base_rev <- readRDS(file.path(model_output_dir, "baseline_revenue.rds"))
+reference_year <- max(base_rev$Calendar_Year, na.rm = TRUE)
 manuscript_output_dir <- data_output_dir
 dir.create(manuscript_output_dir, recursive = TRUE, showWarnings = FALSE)
 
@@ -204,7 +205,6 @@ ggplot2::ggsave(file.path(manuscript_output_dir, "revenue_gain_ranking.png"),
 
 # --- Supplementary state descriptive table -----------------------------
 
-reference_year <- max(base_rev$Calendar_Year, na.rm = TRUE)
 reference_df <- base_rev[base_rev$Calendar_Year == reference_year, , drop = FALSE]
 
 state_rows <- lapply(split(reference_df, reference_df$state_abbr), function(df) {
@@ -269,7 +269,7 @@ scatter_df <- merge(descriptive_df, outcome, by = "state_abbr", all = FALSE, sor
 
 measures <- c(
   cigarette_price_per_pack_dollar = "Cigarette price per pack ($)",
-  state_cigarette_excise_tax_per_pack_dollar = "State cigarette excise tax per pack ($)",
+  state_cigarette_excise_tax_per_pack_dollar = sprintf("State cigarette excise tax per pack (%d dollars)", reference_year),
   smoking_prevalence_pct = "Smoking prevalence (%)",
   cigarettes_per_day = "Cigarettes per day among current smokers"
 )
@@ -294,13 +294,14 @@ scatter_plots <- lapply(names(measures), function(measure)
 scatter_figure <- gridExtra::arrangeGrob(
   grobs = scatter_plots, ncol = 2,
   top = grid::textGrob(
-    sprintf("$1 Policy (Index = 0): Cumulative Revenue Gain per Capita, FY%d-FY%d",
-            min(outcome_years), max(outcome_years)),
+    sprintf(paste0("Cumulative revenue gain per capita, fiscal year %d to %d under a\n",
+                    "$1 cigarette tax increase applied in %d with no indexing for inflation"),
+            min(outcome_years), max(outcome_years), policy_year - 1L),
     gp = grid::gpar(fontsize = 15, fontface = "bold")
   )
 )
 
-ggplot2::ggsave(file.path(manuscript_output_dir, "state_level_revenue_scatter.png"),
+ggplot2::ggsave(file.path(manuscript_output_dir, "supp_state_scatter.png"),
                 scatter_figure, width = 12, height = 9, dpi = 300, bg = "white")
 
 # --- Four-panel state mock-up -------------------------------------------
@@ -310,6 +311,12 @@ panel_table_years <- 2027:2032
 tbot <- utils::read.csv(file.path(input_root, "data_for_tcp_revenue.csv"))
 panel_labels <- c("Baseline", "$1: Index = 1", "$1: Index = 0",
                   "$2: Index = 1", "$2: Index = 0")
+panel_table_labels <- setNames(c(
+  "$1 cigarette tax increase\nwith inflation indexing",
+  "$1 cigarette tax increase\nwithout inflation indexing",
+  "$2 cigarette tax increase\nwith inflation indexing",
+  "$2 cigarette tax increase\nwithout inflation indexing"
+), panel_labels[-1])
 panel_colors <- setNames(c("gray25", "#0072B2", "#0072B2", "#D55E00", "#D55E00"), panel_labels)
 panel_lines <- setNames(c("solid", "solid", "42", "solid", "42"), panel_labels)
 
@@ -325,7 +332,7 @@ state_panel <- function(state) {
   years <- range(df$Calendar_Year)
   year_breaks <- sort(unique(c(seq(years[1], years[2], 5), policy_year, years[2])))
 
-  panel_plot <- function(data, value, title, y_label, divisor = 1) {
+  panel_plot <- function(data, value, title, y_label, divisor = 1, y_expand = c(0.05, 0.05)) {
     data <- data[data$scenario == "baseline" | data$Calendar_Year >= policy_year - 1L, ]
     ggplot2::ggplot(data, ggplot2::aes(Calendar_Year, .data[[value]] / divisor,
                                      color = label, linetype = label)) +
@@ -337,7 +344,8 @@ state_panel <- function(state) {
       ggplot2::scale_linetype_manual(values = panel_lines, drop = FALSE) +
       ggplot2::scale_x_continuous(breaks = year_breaks, minor_breaks = seq(years[1], years[2]),
                                  expand = ggplot2::expansion(mult = 0)) +
-      ggplot2::scale_y_continuous(labels = function(x) format(x, big.mark = ",", trim = TRUE)) +
+      ggplot2::scale_y_continuous(labels = function(x) format(x, big.mark = ",", trim = TRUE),
+                                 expand = ggplot2::expansion(mult = y_expand)) +
       ggplot2::coord_cartesian(xlim = years, clip = "off") +
       ggplot2::labs(title = title, x = "Fiscal year", y = y_label, color = NULL, linetype = NULL) +
       ggplot2::theme_bw(base_size = 11) +
@@ -360,7 +368,8 @@ state_panel <- function(state) {
   historical <- historical[order(historical$year), ]
   tax_changes <- historical[c(TRUE, diff(historical$state_tax_rate_cent) != 0), ]
   tax_plot <- panel_plot(tax_df, "state_tax_rate_dollar_proj",
-                         "A. State cigarette excise tax per pack", "Tax per pack ($)") +
+                         "A. State cigarette excise tax per pack", "Tax per pack ($)",
+                         y_expand = c(0.03, 0.18)) +
     ggplot2::geom_point(data = tax_df[tax_df$scenario == "model_inf", ],
                         size = 1, show.legend = FALSE) +
     ggplot2::geom_step(data = historical, ggplot2::aes(year, state_tax_rate_cent / 100),
@@ -383,9 +392,7 @@ state_panel <- function(state) {
                                                      vjust = ifelse(scenario == "baseline", 0.5,
                                                                      ifelse(scenario == "model_inf", 1.2, -0.3))),
                        inherit.aes = FALSE, hjust = 0, size = 3) +
-    ggplot2::expand_limits(y = 0) +
-    ggplot2::annotate("text", x = policy_year, y = max(onset$state_tax_rate_dollar_proj) + 0.45,
-                      label = paste("Policy:", policy_year), size = 3)
+    ggplot2::expand_limits(y = 0)
   consumption_plot <- panel_plot(df, "cigarette_packs_smoked_total",
                                   "B. Total cigarette consumption", "Consumption (million packs/year)", 1e6)
   revenue_plot <- panel_plot(df, "state_revenue_model_scaled",
@@ -409,7 +416,8 @@ state_panel <- function(state) {
     rows <- rows[match(panel_table_years, rows$Calendar_Year), ]
     values <- rbind(rows$gain / 1e6, rows$gain / rows$population)
     values <- matrix(sprintf("$%.1f", values), nrow = 2)
-    cbind(Scenario = c(label, ""), Measure = c("Total ($M)", "Per capita ($)"), values)
+    cbind(Scenario = c(panel_table_labels[[label]], ""),
+          Measure = c("Total ($M)", "Per capita ($)"), values)
   })
   gain_table <- do.call(rbind, gain_rows)
   colnames(gain_table) <- c("Scenario", "Measure", paste0("FY", panel_table_years))
@@ -417,8 +425,10 @@ state_panel <- function(state) {
       base_size = 11, padding = grid::unit(c(6, 1.5), "mm"),
       core = list(bg_params = list(fill = "white", col = NA))
     ))
-  table_grob$widths <- grid::unit(c(1.25, 1.15, rep(0.7, length(panel_table_years))), "in")
+  table_grob$widths <- grid::unit(c(2.25, 1.15, rep(0.7, length(panel_table_years))), "in")
   table_grob$heights <- grid::unit(rep(0.32, nrow(table_grob)), "in")
+  scenario_cells <- with(table_grob$layout, name == "core-fg" & l == 1L & t %% 2L == 0L)
+  table_grob$layout$b[scenario_cells] <- table_grob$layout$t[scenario_cells] + 1L
   for (row in c(1L, nrow(table_grob)))
     table_grob <- gtable::gtable_add_grob(table_grob,
       grid::segmentsGrob(x0 = 0, x1 = 1, y0 = 0, y1 = 0,
@@ -434,13 +444,14 @@ state_panel <- function(state) {
     grid::segmentsGrob(x0 = grid::unit(0, "cm"), x1 = grid::unit(0.8, "cm"),
                        y0 = 0.5, y1 = 0.5,
                        gp = grid::gpar(col = panel_colors[[label]], lty = panel_lines[[label]], lwd = 2)),
-    grid::textGrob(label, x = grid::unit(1, "cm"), hjust = 0,
+    grid::textGrob(if (label == "Baseline") label else panel_table_labels[[label]],
+                   x = grid::unit(1, "cm"), hjust = 0,
                    gp = grid::gpar(fontsize = 11))
   )
   legend <- gridExtra::arrangeGrob(
     grobs = lapply(panel_labels, legend_key),
     layout_matrix = rbind(c(1, 2, 3), c(1, 4, 5)),
-    widths = grid::unit(c(3, 4.5, 4.5), "cm"), heights = grid::unit(c(0.6, 0.6), "cm")
+    widths = grid::unit(c(3, 7.5, 7.5), "cm"), heights = grid::unit(c(1.1, 1.1), "cm")
   )
   plots <- lapply(list(tax_plot, consumption_plot, revenue_plot), ggplot2::ggplotGrob)
   shared_widths <- do.call(grid::unit.pmax, lapply(plots, function(plot) plot$widths))
@@ -450,7 +461,7 @@ state_panel <- function(state) {
   })
   figure <- gridExtra::arrangeGrob(
     grobs = c(list(legend), plots, list(table_plot)),
-    ncol = 1, heights = c(0.55, 2.8, 2.8, 2.8, 3.2),
+    ncol = 1, heights = c(1, 2.8, 2.8, 2.8, 3.2),
     top = grid::textGrob(paste0(state_lookup$state_name[match(state, state_lookup$state_abbr)],
                                " (", state, "): Cigarette Tax Model Outcomes"),
                          gp = grid::gpar(fontsize = 15, fontface = "bold"))

@@ -330,11 +330,7 @@ validation_sims <- setNames(
 )
 validation_prev <- setNames(
   lapply(state_cfg$state_abbr, function(state) {
-    utils::read.csv(
-      file.path(model_validation_dir, paste0(tolower(state), "_prevalence.csv")),
-      stringsAsFactors = FALSE
-    )
-  }),
+    utils::read.csv(file.path(model_validation_dir, paste0(tolower(state), "_prevalence.csv")),stringsAsFactors = FALSE)}),
   state_cfg$state_abbr
 )
 
@@ -369,11 +365,7 @@ for (i in seq_len(nrow(state_cfg))) {
 }
 
 validation_comparison <- do.call(rbind, lapply(validation_results, `[[`, "comparison"))
-utils::write.csv(
-  validation_comparison,
-  file.path(model_validation_dir, "validation_comparison.csv"),
-  row.names = FALSE
-)
+utils::write.csv(validation_comparison,file.path(model_validation_dir, "validation_comparison.csv"),row.names = FALSE)
 
 # --- Validation figure --------------------------------------------------
 
@@ -431,9 +423,9 @@ validation_plot <- ggplot2::ggplot() +
   ggplot2::geom_point(data = plot_df, ggplot2::aes(date, policy, color = "Model Policy"), size = 2.2) +
   ggplot2::geom_point(data = plot_df, ggplot2::aes(date, observed, color = "Observed"), size = 2.5) +
   ggplot2::geom_text(data = events, ggplot2::aes(date - 90, y, label = label),
-                     hjust = 1, vjust = -1.2, size = 3.2, color = "gray25") +
+                     hjust = 1, vjust = -1.2, size = 3.2, color = "black") +
   ggplot2::geom_label(data = tax_notes, ggplot2::aes(date, revenue_max * 0.96, label = label),
-                      hjust = 0, vjust = 1, size = 3, fill = "white", color = "gray25", linewidth = 0.3) +
+                      hjust = 0, vjust = 1, size = 3, fill = "white", color = "black", linewidth = 0.3) +
   ggplot2::facet_wrap(~ state, ncol = 1, scales = "fixed", axes = "all", axis.labels = "all") +
   ggplot2::scale_color_manual(breaks = names(series_colors), values = series_colors) +
   ggplot2::scale_x_date(breaks = fy(val_min:val_max), labels = fy_lab,
@@ -444,11 +436,15 @@ validation_plot <- ggplot2::ggplot() +
                 y = "Revenue per capita ($)", color = NULL) +
   ggplot2::theme_minimal(base_size = 12) +
   ggplot2::theme(legend.position = "top", panel.grid.minor = ggplot2::element_blank(),
+                 text = ggplot2::element_text(color = "black"),
+                 axis.text = ggplot2::element_text(color = "black"),
+                 axis.title = ggplot2::element_text(color = "black"),
+                 legend.text = ggplot2::element_text(size = 14, color = "black"),
                  legend.key.width = grid::unit(0.85, "cm"),
                  panel.grid.major = ggplot2::element_line(color = "gray91"),
                  panel.spacing.y = grid::unit(1, "lines"),
                  axis.text.x = ggplot2::element_text(size = 9),
-                 strip.text = ggplot2::element_text(face = "bold", hjust = 0, size = 16),
+                 strip.text = ggplot2::element_text(face = "bold", hjust = 0, size = 16, color = "black"),
                  plot.margin = ggplot2::margin(12, 16, 12, 12)) +
   ggplot2::guides(color = ggplot2::guide_legend(
     override.aes = list(shape = 16, linetype = c("blank", "solid", "solid"))
