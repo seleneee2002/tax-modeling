@@ -103,15 +103,15 @@ utils::write.csv(total_revenue,
 
 concise_revenue_table_raw <- gain_only(total_revenue_raw)
 concise_revenue_table <- gain_only(total_revenue)
-utils::write.csv(concise_revenue_table,
-                 file.path(manuscript_output_dir, "revenue_gain.csv"),
-                 row.names = FALSE)
+# utils::write.csv(concise_revenue_table,
+#                  file.path(manuscript_output_dir, "revenue_gain.csv"),
+#                  row.names = FALSE)
 
 per_capita_revenue_table_raw <- proj_table("scaled_revenue_per_capita", pc_col)
 per_capita_revenue_table <- format_table(per_capita_revenue_table_raw, pc_col, 2)
-utils::write.csv(per_capita_revenue_table,
-                 file.path(manuscript_output_dir, "revenue_table_per_capita.csv"),
-                 row.names = FALSE)
+# utils::write.csv(per_capita_revenue_table,
+#                  file.path(manuscript_output_dir, "revenue_table_per_capita.csv"),
+#                  row.names = FALSE)
 
 #===============================================================================
 # Figure3: cumulative revenue & cumulative revenue per capita gains by state
@@ -131,13 +131,17 @@ gain_plot <- function(df, title, x_label, x_labels, state_order) {
     ggplot2::scale_color_manual(
       values = c("$1 tax increase" = "#0072B2", "$2 tax increase" = "#D55E00")
     ) +
-    ggplot2::scale_shape_manual(values = c("Index = 1" = 16, "Index = 0" = 17)) +
+    ggplot2::scale_shape_manual(
+      values = c("Index = 1" = 16, "Index = 0" = 17),
+      labels = c("Index = 1" = "With inflation indexing",
+                 "Index = 0" = "Without inflation indexing")
+    ) +
     ggplot2::scale_x_continuous(labels = x_labels,
                                breaks = scales::breaks_pretty(n = 8),
                                minor_breaks = scales::breaks_pretty(n = 16)) +
     ggplot2::labs(
       title = title, x = x_label, y = NULL,
-      color = "Tax scenario", shape = "Inflation index"
+      color = "Tax scenario", shape = NULL
     ) +
     ggplot2::theme_minimal(base_size = 14) +
     ggplot2::theme(
@@ -416,19 +420,30 @@ state_panel <- function(state) {
     rows <- rows[match(panel_table_years, rows$Calendar_Year), ]
     values <- rbind(rows$gain / 1e6, rows$gain / rows$population)
     values <- matrix(sprintf("$%.1f", values), nrow = 2)
-    cbind(Scenario = c(panel_table_labels[[label]], ""),
+    indexing <- rows$scenario[1] == "model_noinf"
+    cbind(Tax = c(if (indexing) paste0("$", rows$tax_increase_dollar[1]) else "", ""),
+          Indexing = c(if (indexing) "Yes" else "No", ""),
           Measure = c("Total ($M)", "Per capita ($)"), values)
   })
   gain_table <- do.call(rbind, gain_rows)
-  colnames(gain_table) <- c("Scenario", "Measure", paste0("FY", panel_table_years))
+  colnames(gain_table) <- c("Scenario\nTax increase", "Inflation\nindexing", "Measure",
+                           paste0("FY", panel_table_years))
   table_grob <- gridExtra::tableGrob(gain_table, rows = NULL, theme = gridExtra::ttheme_minimal(
       base_size = 11, padding = grid::unit(c(6, 1.5), "mm"),
       core = list(bg_params = list(fill = "white", col = NA))
     ))
-  table_grob$widths <- grid::unit(c(2.25, 1.15, rep(0.7, length(panel_table_years))), "in")
-  table_grob$heights <- grid::unit(rep(0.32, nrow(table_grob)), "in")
-  scenario_cells <- with(table_grob$layout, name == "core-fg" & l == 1L & t %% 2L == 0L)
-  table_grob$layout$b[scenario_cells] <- table_grob$layout$t[scenario_cells] + 1L
+  table_grob$widths <- grid::unit(c(1.05, 1.05, 1.25, rep(0.75, length(panel_table_years))), "in")
+  table_grob$heights <- grid::unit(c(0.46, rep(0.3, nrow(gain_table))), "in")
+  alignment <- c(1, 0.5, 0, rep(1, length(panel_table_years)))
+  for (i in which(grepl("-fg$", table_grob$layout$name))) {
+    hjust <- alignment[table_grob$layout$l[i]]
+    table_grob$grobs[[i]]$hjust <- hjust
+    table_grob$grobs[[i]]$x <- grid::unit(0.05 + 0.9 * hjust, "npc")
+  }
+  tax_cells <- with(table_grob$layout, name == "core-fg" & l == 1L & t %in% c(2L, 6L))
+  indexing_cells <- with(table_grob$layout, name == "core-fg" & l == 2L & t %% 2L == 0L)
+  table_grob$layout$b[tax_cells] <- table_grob$layout$t[tax_cells] + 3L
+  table_grob$layout$b[indexing_cells] <- table_grob$layout$t[indexing_cells] + 1L
   for (row in c(1L, nrow(table_grob)))
     table_grob <- gtable::gtable_add_grob(table_grob,
       grid::segmentsGrob(x0 = 0, x1 = 1, y0 = 0, y1 = 0,

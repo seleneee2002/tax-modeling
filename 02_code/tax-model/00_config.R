@@ -30,7 +30,18 @@ seer_age_85_plus_weights <- c(
 )
 
 inflation_adjustment_rate <- 0.97
-consumption_elasticity <- -0.28
+
+# Values outside each mechanism's age range are zero, including interval endpoints.
+age_elasticities <- function(ages, estimate, interval) {
+  age <- 0:99
+  active <- age %in% ages
+  data.frame(age = age, estimate = ifelse(active, estimate, 0),
+              ci_min = ifelse(active, interval[1], 0),
+              ci_max = ifelse(active, interval[2], 0))
+}
+init_elasticities <- age_elasticities(18:25, -0.423, c(-0.811, -0.036))
+cess_elasticities <- age_elasticities(26:99, 1.11, c(1.281, 3.049))
+intensity_elasticities <- age_elasticities(0:99, -0.28, c(-0.42, -0.14))
 
 state_lookup <- data.frame(
   state_fips = c(

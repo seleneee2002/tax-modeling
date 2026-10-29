@@ -445,16 +445,11 @@ runstates <- function(fipscode, m.initiation.effect, m.cessation.effect){
 #===============================================================================
 # Cigarette Tax Function
 tax_effectCalculation <- function(initprice, tax, startbc = 1908, endyear = 2200, policyYear,
+                                  init_elasticities, cess_elasticities,
                                   cesdecay = 0.2, apply_inflation_adjustment = FALSE,
                                   inflation_adjustment_rate = 0.97) {
   ages <- 0:99
   periods <- startbc:endyear
-  
-  cess_elasticities <- c(rep(0, 10), rep(-2.0, 90))
-  init_elasticities <- c(
-    rep(0, 10), rep(-0.4, 8), rep(-0.3, 7),
-    rep(-0.2, 20), rep(0, 55)
-  )
   
   m.initiation.effect <- m.cessation.effect <- matrix(
     1, nrow = length(ages), ncol = length(periods),
@@ -468,7 +463,8 @@ tax_effectCalculation <- function(initprice, tax, startbc = 1908, endyear = 2200
     pricechange <- (newprice - initprice) / ((newprice + initprice) / 2)
     
     m.initiation.effect[, j] <- 1 + pricechange * init_elasticities
-    m.cessation.effect[, j] <- 1 - pricechange * cess_elasticities * (1 - cesdecay)^time
+    # Positive cessation elasticities increase quitting after a tax increase.
+    m.cessation.effect[, j] <- 1 + pricechange * cess_elasticities * (1 - cesdecay)^time
   }
   
   list(

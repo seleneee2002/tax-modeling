@@ -1,7 +1,7 @@
 # Internal historical validation of the policy model.
 #
 # Pennsylvania, Oklahoma, and Kentucky are used because each had a discrete,
-# sizable cigarette excise-tax increase within the FY2010-FY2022 observation window.
+# sizable cigarette excise-tax increase within the FY2010-FY2025 observation window.
 
 # PA and OK provide two $1.00 increases, KY adds a smaller $0.50 increase. 
 
@@ -13,7 +13,7 @@ use_packages("ggplot2")
 # --- Setup --------------------------------------------------------------
 
 val_min <- 2010L
-val_max <- 2022L
+val_max <- 2025L
 
 state_cfg <- data.frame(
   state_fips = c("42", "40", "21"),
@@ -27,10 +27,12 @@ state_cfg <- data.frame(
 )
 
 base_rev <- readRDS(file.path(model_output_dir, "baseline_revenue.rds"))
-# Older outputs wrap the table in a list and use longer column names.
 if (!is.data.frame(base_rev)) base_rev <- base_rev$baseline_revenue_calculation
 if (!is.data.frame(base_rev)) stop("baseline_revenue.rds does not contain a baseline revenue table.")
 base_rev <- base_rev[base_rev$Calendar_Year >= val_min & base_rev$Calendar_Year <= val_max, , drop = FALSE]
+if (any(vapply(state_cfg$state_abbr, function(state)
+  !all(val_min:val_max %in% base_rev$Calendar_Year[base_rev$state_abbr == state]), logical(1))))
+  stop("Validation requires baseline_revenue.rds through FY2025 for PA, OK and KY; update 03_revenue_model.R outputs first.")
 legacy_cols <- c(avg_cpd = "average_cpd_smokers", scale_factor = "tbot_to_model_scaling_factor")
 for (column in names(legacy_cols)) {
   if (!column %in% names(base_rev)) base_rev[[column]] <- base_rev[[legacy_cols[[column]]]]
@@ -51,7 +53,8 @@ join_keys <- c("state_fips", "state_abbr", "sex", "START_YOB", "END_YOB", "AGE",
 
 # --- Model simulations --------------------------------------------------
 
-sim_state <- function(cfg, year_min = val_min, year_max = val_max) {
+sim_state <- function(cfg, init_elasticities, cess_elasticities, intensity_elasticities,
+                       year_min = val_min, year_max = val_max) {
   fips <- cfg$state_fips[1]
   state <- cfg$state_abbr[1]
   policy_year <- as.integer(cfg$policy_year[1])
@@ -63,12 +66,14 @@ sim_state <- function(cfg, year_min = val_min, year_max = val_max) {
   
   noinf <- tax_effectCalculation(
     price, tax, startbc, endyear, policy_year,
+    init_elasticities = init_elasticities, cess_elasticities = cess_elasticities,
     cesdecay = 0.2, apply_inflation_adjustment = FALSE,
     inflation_adjustment_rate = inflation_adjustment_rate
   )
   
   inf <- tax_effectCalculation(
     price, tax, startbc, endyear, policy_year,
+    init_elasticities = init_elasticities, cess_elasticities = cess_elasticities,
     cesdecay = 0.2, apply_inflation_adjustment = TRUE,
     inflation_adjustment_rate = inflation_adjustment_rate
   )
@@ -86,7 +91,10 @@ sim_state <- function(cfg, year_min = val_min, year_max = val_max) {
   result <- c(list(metadata = list(
     state_fips = fips, state_abbr = state, policy_year = policy_year,
     tax_increase_dollar = tax, inflation_adjustment_rate = inflation_adjustment_rate,
-    init_price = price, year_min = year_min, year_max = year_max
+    init_price = price, year_min = year_min, year_max = year_max,
+    init_elasticities = init_elasticities,
+    cess_elasticities = cess_elasticities,
+    intensity_elasticities = intensity_elasticities
   )), models)
   
   saveRDS(result, file.path(validation_model_dir, paste0(tolower(state), "_results.rds")), compress = "xz")
@@ -96,7 +104,10 @@ sim_state <- function(cfg, year_min = val_min, year_max = val_max) {
 # --- Run simulations ----------------------------------------------------
 
 for (i in seq_len(nrow(state_cfg))) {
-  sim_state(state_cfg[i, , drop = FALSE])
+  sim_state(state_cfg[i, , drop = FALSE],
+            init_elasticities = init_elasticities$estimate,
+            cess_elasticities = cess_elasticities$estimate,
+            intensity_elasticities = intensity_elasticities$estimate)
   gc()
 }
 
@@ -161,7 +172,7 @@ case_spec <- function(tax) {
   )
 }
 
-policy_case <- function(input, spec) {
+policy_case <- function(input, spec, intensity_elasticities) {
   cfg <- input$cfg
   policy_year <- as.integer(cfg$policy_year[1])
   base_price <- as.numeric(cfg$init_price[1])
@@ -189,8 +200,9 @@ policy_case <- function(input, spec) {
     df$tax_increase_dollar_effective / midpoint_price,
     0
   )
-  df$consumption_elasticity <- ifelse(post & spec$tax > 0 & spec$consumption, consumption_elasticity, 0)
-  df$cpd_pct_change <- df$consumption_elasticity * df$percentage_change_in_price
+  df$intensity_elasticities <- ifelse(post & spec$tax > 0 & spec$consumption,
+                                      intensity_elasticities[df$AGE + 1L], 0)
+  df$cpd_pct_change <- df$intensity_elasticities * df$percentage_change_in_price
 
   match_idx <- match(paste(df$state_fips, df$sex, df$AGE, df$Calendar_Year, sep = "|"), input$cpd$key)
   df$cpd_after_tax <- input$cpd$avg_cpd[match_idx] * (1 + df$cpd_pct_change)
@@ -201,9 +213,10 @@ policy_case <- function(input, spec) {
   df
 }
 
-run_cases <- function(input) {
+run_cases <- function(input, intensity_elasticities) {
   specs <- case_spec(as.numeric(input$cfg$tax_increase_dollar[1]))
-  cases <- lapply(seq_len(nrow(specs)), function(i) policy_case(input, specs[i, , drop = FALSE]))
+  cases <- lapply(seq_len(nrow(specs)), function(i)
+    policy_case(input, specs[i, , drop = FALSE], intensity_elasticities = intensity_elasticities))
   names(cases) <- specs$name
   list(specs = specs, cases = cases)
 }
@@ -214,7 +227,7 @@ case_summary <- function(df, observed, spec) {
   sum_cols <- c("population", "smokers", "packs_smoked_model", "tax_revenue_model")
   first_cols <- c("scenario_tax_rate_dollar", "tax_increase_dollar_effective",
                   "base_price", "policy_price", "percentage_change_in_price",
-                  "consumption_elasticity", "cpd_pct_change",
+                  "intensity_elasticities", "cpd_pct_change",
                   "scale_factor")
   
   totals <- aggregate(df[sum_cols], by = list(Calendar_Year = df$Calendar_Year),
@@ -239,7 +252,7 @@ case_summary <- function(df, observed, spec) {
   out[, c(
     "scenario", "Calendar_Year", "inflation_adjustment_applied", "inflation_adjustment_rate",
     "state_tax_rate_dollar", "tax_increase_dollar_effective", "base_price",
-    "policy_price", "percentage_change_in_price", "consumption_elasticity",
+    "policy_price", "percentage_change_in_price", "intensity_elasticities",
     "cpd_pct_change", "cpd_after_tax", "total_population", "total_smokers", "prevalence",
     "packs_smoked_model", "model_packs_per_capita", "observed_state_cig_pack_per_capita",
     "observed_state_tax_rate_dollar", "observed_taxed_packs_sold", "observed_tax_revenue",
@@ -343,7 +356,7 @@ for (i in seq_len(nrow(state_cfg))) {
   state <- cfg$state_abbr
   sim <- validation_sims[[state]]
   input <- state_input(cfg, validation_prev[[state]])
-  cases <- run_cases(input)
+  cases <- run_cases(input, intensity_elasticities = intensity_elasticities$estimate)
   summaries <- summarize_cases(cases, input$observed)
   comparison <- wide_compare(summaries, input$observed)
   comparison$state_abbr <- state

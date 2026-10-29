@@ -44,13 +44,6 @@ pop_updates <- pop_updates[
 
 states <- state_lookup[, c("state_abbr", "state_fips")]
 
-# Require the updated calibration instead of silently carrying forward FY2022.
-reference_scales <- scales[scales$Calendar_Year == scaling_year, , drop = FALSE]
-if (anyDuplicated(scales[c("state_abbr", "Calendar_Year")]) ||
-    !setequal(reference_scales$state_abbr, states$state_abbr) ||
-    any(!is.finite(reference_scales$scale_factor) | reference_scales$scale_factor <= 0))
-  stop("Run 03_revenue_model.R first to prepare valid FY2025 scaling factors for all states.")
-
 # Use each year's SHG baseline CPD, including the future model trajectory.
 cpd_df <- cpd_long_df(
   data.table::fread(cpd_file,
@@ -84,7 +77,7 @@ update_pop <- function(prev_df, pop_updates) {
 }
 
 # Calculate annual revenue for one projection scenario.
-proj_summary <- function(prev_df, rev_input, scenario, tax, inflation) {
+proj_summary <- function(prev_df, rev_input, scenario, tax, inflation, intensity_elasticities) {
   keys <- c("sex", "AGE", "Calendar_Year")
   df <- merge(prev_df[, c(keys, "population", "smokers")], rev_input,
               by = keys, all.x = TRUE, sort = FALSE)
@@ -101,7 +94,7 @@ proj_summary <- function(prev_df, rev_input, scenario, tax, inflation) {
   
   midpoint_price <- (df$base_price + df$policy_price) / 2
   price_change <- df$tax_increase_dollar_effective / midpoint_price
-  df$avg_cpd_proj <- df$avg_cpd * (1 + consumption_elasticity * price_change)
+  df$avg_cpd_proj <- df$avg_cpd * (1 + intensity_elasticities[df$AGE + 1L] * price_change)
   
   revenue <- revenue_calc(df$smokers, df$avg_cpd_proj, df$state_tax_rate_dollar_proj)
   df$cigarette_packs_smoked_total <- revenue$total_packs
@@ -148,7 +141,8 @@ mort_summary <- function(mort_df, scenario_name) {
 }
 
 # Run all projection scenarios for one state and tax increase.
-project_state <- function(state_abbr, state_fips, tax) {
+project_state <- function(state_abbr, state_fips, tax,
+                          init_elasticities, cess_elasticities, intensity_elasticities) {
   init_price <- price_df$state_price_per_pack_wt_cent[
     price_df$state_abbr == state_abbr & price_df$Calendar_Year == price_year][1] / 100
   
@@ -164,11 +158,13 @@ project_state <- function(state_abbr, state_fips, tax) {
   
   noinf_effects <- tax_effectCalculation(
     init_price, tax, startbc, endyear, policy_year_default,
+    init_elasticities = init_elasticities, cess_elasticities = cess_elasticities,
     cesdecay = 0.2, apply_inflation_adjustment = FALSE,
     inflation_adjustment_rate = inflation_adjustment_rate
   )
   inf_effects <- tax_effectCalculation(
     init_price, tax, startbc, endyear, policy_year_default,
+    init_elasticities = init_elasticities, cess_elasticities = cess_elasticities,
     cesdecay = 0.2, apply_inflation_adjustment = TRUE,
     inflation_adjustment_rate = inflation_adjustment_rate
   )
@@ -215,7 +211,7 @@ project_state <- function(state_abbr, state_fips, tax) {
   rev_input$baseline_tax_rate_dollar <- state_price_tax$state_tax_rate_cent[price_match] / 100
   reference_tax <- state_price_tax$state_tax_rate_cent[state_price_tax$Calendar_Year == price_year][1] / 100
   rev_input$baseline_tax_rate_dollar[is.na(rev_input$baseline_tax_rate_dollar)] <- reference_tax
-  # Annual historical calibration; hold FY2025 fixed from FY2026 onward.
+  # Use each year's factor for FY2010-FY2025; hold FY2025 fixed from FY2026 onward.
   scale_match <- match(pmin(rev_input$Calendar_Year, scaling_year), state_scales$Calendar_Year)
   rev_input$latest_scaling_factor <- state_scales$scale_factor[scale_match]
   if (any(!is.finite(rev_input$latest_scaling_factor) | rev_input$latest_scaling_factor <= 0))
@@ -223,7 +219,7 @@ project_state <- function(state_abbr, state_fips, tax) {
   
   annual_summary <- do.call(rbind, lapply(names(prev), function(scenario)
     proj_summary(prev[[scenario]], rev_input, scenario, tax,
-                 inflation = scenario == "model_inf")))
+                 inflation = scenario == "model_inf", intensity_elasticities = intensity_elasticities)))
   
   baseline_mort <- mort_summary(models$model_noinf$df_mort.outputs, "baseline")
   baseline_mort[c("LYG", "LYGcum", "SADsAverted", "SADsAvertedcum")] <- 0
@@ -249,7 +245,10 @@ for (i in seq_len(nrow(states))) {
   
   for (j in seq_along(tax_increases)) {
     tax <- tax_increases[j]
-    result <- project_state(state, fips, tax)
+    result <- project_state(state, fips, tax,
+                             init_elasticities = init_elasticities$estimate,
+                             cess_elasticities = cess_elasticities$estimate,
+                             intensity_elasticities = intensity_elasticities$estimate)
     
     annual <- result$annual_summary
     annual$state_fips <- fips
@@ -283,19 +282,15 @@ all_projection <- list(
   metadata = list(
     policy_year = policy_year_default,
     tax_increases = tax_increases,
-    consumption_elasticity = consumption_elasticity,
+    init_elasticities = init_elasticities$estimate,
+    cess_elasticities = cess_elasticities$estimate,
+    intensity_elasticities = intensity_elasticities$estimate,
     inflation_adjustment_rate = inflation_adjustment_rate,
     policy_baseline_price_year = price_year,
     policy_baseline_tax_year = price_year,
     observed_price_tax_years = year_min:price_year,
     cpd_model_years = year_min:year_max,
-    cpd_future_assumption = "Use annual SHG age-sex baseline CPD before the scenario-specific tax adjustment.",
     scaling_reference_year = scaling_year,
-    scaling_future_assumption = "Use annual factors through FY2025; hold each state's FY2025 factor fixed thereafter.",
-    # future_price_tax_assumption = paste(
-    #   "Carry forward FY2025 observed price and state excise tax from FY2026 onward,",
-    #   "then add the scenario-specific tax increase beginning in the policy year."
-    # ),
     cpd_path = normalizePath(cpd_file, winslash = "/", mustWork = TRUE),
     price_tax_path = normalizePath(price_file, winslash = "/", mustWork = TRUE),
     baseline_revenue_path = normalizePath(file.path(model_output_dir, "baseline_revenue.rds"),
